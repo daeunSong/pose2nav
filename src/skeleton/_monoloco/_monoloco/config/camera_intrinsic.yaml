@@ -1,0 +1,15 @@
+scand_jackal:
+  topic: "/camera/rgb/image_raw/compressed"
+  intrinsics:
+    - [623.3087, 0., 636.79787]
+    - [0., 624.91863, 366.72814]
+    - [0., 0., 1.]
+  im_size: [1280, 720]
+
+scand_spot:
+  topic: "/image_raw/compressed"
+  intrinsics:
+    - [923.271240, 0., 956.768494]
+    - [0., 923.184509, 551.826050]
+    - [0., 0., 1.]
+  im_size: [1280, 720]
