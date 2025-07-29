@@ -10,6 +10,9 @@ The parser requires `Python>=3.9` for type annotations. `pyntcloud` package work
 conda env create -f env.yaml
 conda activate pose2nav
 pip install -r requirements.txt
+export PYTHONPATH=$(pwd)/pose2nav:$PYTHONPATH
+export PYTHONPATH=$(pwd)/pose2nav/skeleton/_monoloco:$PYTHONPATH
+export PYTHONPATH=$(pwd)/pose2nav/skeleton/_mmpose:$PYTHONPATH
 ```
 
 ## Parsing the data
@@ -19,7 +22,7 @@ It is recommended to place all the bag files inside the [data](../social_nav/dat
 Project structure:
 ```
 pose2nav/
-├── data_parser.md
+├── DATA.md
 ├── README.md
 ├── requirements.txt
 ├── env.yaml
@@ -32,11 +35,15 @@ pose2nav/
 │       ├── A_Jackal_AHG_Library_Thu_Nov_4_16_0/
 │       │   ├── point_cloud/
 │       │   ├── rgb/
+│       │   ├── keypoints/
+│       │   │   └── keypoints.pkl
 │       │   └── traj_data.pkl
 │       ├── mn_dc_night_1_casual_0/
 │       │   ├── depth/
 │       │   ├── point_cloud/
 │       │   ├── rgb/
+│       │   ├── keypoints/
+│       │   │   └── keypoints.pkl
 │       │   └── traj_data.pkl
 └── pose2nav/
     ├── __init__.py
@@ -45,7 +52,6 @@ pose2nav/
     ├── data_parser/
     │   ├── __init__.py
     │   ├── parser.py
-    │   ├── parser_utils.py
     │   ├── musohu_parser.py
     │   └── scand_parser.py
     └── utils/
@@ -57,11 +63,13 @@ pose2nav/
 
 To run the MuSoHu parser, from the root directory of the project run:
 ```bash
-python -m pose2nav.data_parser.parser --name musohu --conf pose2nav/config/parser
+python pose2nav/data_parser/parser.py --name musohu --conf pose2nav/config/parser -kp
 ```
 
 And to run SCAND parser, change the parser argument to `scand` like:
 ```bash
-python -m pose2nav.data_parser.parser --name scand --conf pose2nav/config/parser
+python pose2nav/data_parser/parser.py --name scand --conf pose2nav/config/parser -kp
 ```
 We only store the front facing camera for the Spot in SCAND, so both MuSoHu and SCAND have the *same* interface. The only difference is that SCAND does not contain depth data.
+
+`-kp` for parsing the keypoints

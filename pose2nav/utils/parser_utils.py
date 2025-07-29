@@ -6,6 +6,8 @@ import sensor_msgs.point_cloud2 as pc2
 import pandas as pd
 import io
 
+from typing import Any
+
 
 def poly_fit(traj, traj_len, threshold):
     """

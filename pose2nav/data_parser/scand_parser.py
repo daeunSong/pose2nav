@@ -17,7 +17,7 @@ from tqdm import tqdm
 from scipy.signal import savgol_filter
 import pandas as pd
 
-from pose2nav.utils.parser_utils import *
+from utils.parser_utils import *
 
 
 class SCANDParser:
@@ -196,8 +196,6 @@ class SCANDParser:
             traj_data["position"][:, 1], window_length=31, polyorder=3, mode="nearest"
         )
 
-        return img_data, traj_data, pc_data
-
     def parse_bags(self, bag_path) -> None:
         # id = 0
         # bag_files = Path(self.cfg.bags_dir).resolve()
@@ -237,7 +235,7 @@ class SCANDParser:
             eval(self.cfg.functions.lidar),
             eval(self.cfg.functions.odom),
             rate=self.cfg.sample_rate,
-            ang_offset=self.cfg.ang_offset,
+            ang_offset=self.cfg.ang_offset, 
         )
         if bag_img_data is None or bag_traj_data is None:
             print(
@@ -274,9 +272,9 @@ class SCANDParser:
             # also save csv version
             pd_frame.to_csv(Path(traj_folder_i / "traj_dataframe.csv").as_posix(), index=False)
             # save the image data to disk
-            for i, img in enumerate(img_data_i):
-                img.save(os.path.join(output_rgb, f"{i}.jpg"))
+            for j, img in enumerate(img_data_i):
+                img.save(os.path.join(output_rgb, f"{j}.jpg"))
             # save the pc data to disk
-            for i, pc in enumerate(pc_data_i):
+            for j, pc in enumerate(pc_data_i):
                 pc = PyntCloud(pc)
-                pc.to_file(os.path.join(output_pc, f"{i}.ply"))
+                pc.to_file(os.path.join(output_pc, f"{j}.ply"))

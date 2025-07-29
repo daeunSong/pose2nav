@@ -47,6 +47,8 @@ conda install pytorch torchvision=0.13.0 torchaudio pytorch-cuda=11.8 -c pytorch
 
 pip3 install sdist gdown pyyaml netifaces openpifpaf==0.12.10
 
+pip install mmcv mmdet mmpose
+
 pip install rospkg
 
 pip install -U openmim
@@ -57,12 +59,23 @@ mim install "mmpose==1.3.2"
 
 ``` -->
 
+<!--
+conda create -n parser python=3.9 -y
+conda install pytorch torchvision=0.13.0 torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
+pip install openmim
+mim install mmengine
+mim install "mmcv>=2.0.1"
+mim install "mmdet>=3.1.0"
+mim install "mmpose>=1.1.0"
+
+-->
+
 ## Launch
 1. Launch skeletal keypthon detection
     ```
     conda activate pose2nav
-    export PYTHONPATH=$(pwd)/src/skeleton/_monoloco:$PYTHONPATH
-    export PYTHONPATH=$(pwd)/src/skeleton/_mmpose:$PYTHONPATH
+    export PYTHONPATH=$(pwd)/pose2nav/skeleton/_monoloco:$PYTHONPATH
+    export PYTHONPATH=$(pwd)/pose2nav/skeleton/_mmpose:$PYTHONPATH
     cd scripts/
     python test_pose_estimation.py
     ```

@@ -10,11 +10,13 @@ from tqdm import tqdm
 from tqdm.contrib.concurrent import process_map, thread_map
 import numpy as np
 
-from pose2nav.utils.helpers import get_conf
-from pose2nav.data_parser.musohu_parser import MuSoHuParser
-from pose2nav.data_parser.scand_parser import SCANDParser
-from pose2nav.data_parser.parser_utils import poly_fit
+from utils.helpers import get_conf
+from data_parser.musohu_parser import MuSoHuParser
+from data_parser.scand_parser import SCANDParser
+from utils.parser_utils import poly_fit
 
+from skeleton.predict import PoseEstimatorNode
+import cv2
 
 def create_samples(input_path, obs_window: int = 6, pred_window: int = 8, linear_threshold: int = 0.03) -> dict:
     """Create multiple samples from the parsed data folder
@@ -85,7 +87,6 @@ def merge(base_dict: dict, new_dict: dict):
 
     return base_dict
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -108,7 +109,15 @@ if __name__ == "__main__":
         action="store_true",
         help="Create samples. Applicable only after parsing bags.",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "-pk",
+        "--parse_keypoints",
+        action="store_true",
+        help="Run skeletal keypoints parsing.",
+    )
+    args, _ = parser.parse_known_args()
+    print("args:", args)
+
     cfg_dir = args.conf
     cfg = get_conf(cfg_dir)
     # dataset = "musohu" if "musohu" in cfg_dir.lower() else "scand"
@@ -144,18 +153,70 @@ if __name__ == "__main__":
         if dataset == "musohu":
             cfg.musohu.update({"sample_rate": cfg.sample_rate})
             cfg.musohu.update({"save_dir": cfg.parsed_dir})
-            parser = MuSoHuParser(cfg.musohu)
-            bag_files = Path(parser.cfg.bags_dir).resolve()
+            data_parser = MuSoHuParser(cfg.musohu)
+            bag_files = Path(data_parser.cfg.bags_dir).resolve()
             bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".bag"]
             # if there are ram limitations, reduce the number of max_workers
-            process_map(parser.parse_bags, bag_files, max_workers=1)
+            process_map(data_parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
 
         elif dataset == "scand":
             cfg.scand.update({"sample_rate": cfg.sample_rate})
             cfg.scand.update({"save_dir": cfg.parsed_dir})
-            parser = SCANDParser(cfg.scand)
-            bag_files = Path(parser.cfg.bags_dir).resolve()
+            data_parser = SCANDParser(cfg.scand)
+            bag_files = Path(data_parser.cfg.bags_dir).resolve()
             bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".bag"]
-            process_map(parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
+            process_map(data_parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
         else:
             raise Exception("Invalid dataset!")
+        
+        if args.parse_keypoints:
+            # Run skeletal keypoints parsing
+            keypoint_model = PoseEstimatorNode()
+
+            processed_dir = Path(cfg.parsed_dir)
+            folders = [x for x in processed_dir.iterdir() if x.is_dir()]
+
+            for folder in tqdm(folders, desc=f"Parsing keypoints for {folder.name}"):
+                rgb_dir = folder / "rgb"
+                rgb_images = rgb_dir.glob("*.jpg")
+
+                keypoints_output = []
+                keypoints_dir = folder / "keypoints"
+                keypoints_dir.mkdir(exist_ok=True)
+
+                for idx, img_path in enumerate(tqdm(rgb_images)):
+                    img = cv2.imread(str(img_path))
+                    if img is None:
+                        print(f"Failed to read {img_path}")
+                        continue
+                    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+                    try:
+                        kp_3d, xyz_3d, kp_2d, output_img = keypoint_model.predict(img_rgb)
+
+                        # Save output image as JPEG
+                        output_img_bgr = cv2.cvtColor(output_img, cv2.COLOR_RGB2BGR)  # Convert back to BGR for saving
+                        img_save_path = keypoints_dir / f"{idx}.jpg"
+                        cv2.imwrite(str(img_save_path), output_img_bgr)
+
+                        # Save keypoint data
+                        keypoints_output.append({
+                            "keypoints_3d": kp_3d,  # (t, n, 17, 3)
+                            "root_3d": xyz_3d,      # (t, n, 3)
+                            "keypoints_2d": kp_2d,  # (t, n, 17, 2)
+                        })
+                    except Exception as e:
+                        print(f"Error processing {img_path.name}: {e}")
+                        continue
+
+                save_path = keypoints_dir / "keypoints_data.pkl"
+                with save_path.open("wb") as f:
+                    pickle.dump(keypoints_output, f)
+
+                
+
+                
+
+
+
+

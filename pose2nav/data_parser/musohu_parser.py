@@ -16,7 +16,7 @@ from tqdm import tqdm
 from scipy.signal import savgol_filter
 import pandas as pd
 
-from pose2nav.utils.parser_utils import *
+from utils.parser_utils import *
 
 
 class MuSoHuParser:
