@@ -15,7 +15,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 # body_3d_keypoint/motionbert_dstformer-243frm_8xb32-240e_h36m-original.py
 # https://download.openmmlab.com/mmpose/v1/body_3d_keypoint/pose_lift/h36m/motionbert_h36m-f554954f_20230531.pth
 
-def parse_args():
+def get_mmpose_parser():
     parser = ArgumentParser()
     parser.add_argument(
         '--det_config', 
@@ -124,5 +124,12 @@ def parse_args():
         'information when using multi frames for inference in the 2D pose'
         'detection stage. Default: False.')
 
+    # args = parser.parse_args()
+    # return args
+
+    return parser
+
+def parse_args():
+    parser = get_mmpose_parser()
     args = parser.parse_args()
     return args

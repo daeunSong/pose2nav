@@ -201,7 +201,7 @@ class MMPosePredictor:
                 pose_est_results[i].pred_instances.bboxes = np.array(bboxes)
 
             # track id
-            _track = _track_by_iou
+            _track = _track_by_oks
             track_id, pose_est_results_last, _ = _track(data_sample,
                                                         pose_est_results_last,
                                                         args.tracking_thr)

@@ -28,9 +28,6 @@ class PoseEstimatorNode:
         self.mmpose_predictor = MMPosePredictor(self.args)
         rospy.loginfo("3D Pose Estimator Node Initialized")
 
-    # def predict(self, image):
-    #     # STEP1: predict
-
 
     def image_callback(self, msg):
         try:

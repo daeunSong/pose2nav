@@ -8,7 +8,7 @@ from openpifpaf import decoder, network, visualizer, show, logger
 current_dir = os.path.dirname(os.path.abspath(__file__))
 monoloco_dir = os.path.dirname(os.path.dirname(current_dir))
 
-def cli():
+def get_monoloco_parser():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     subparsers = parser.add_subparsers(help='Different parsers for main actions', dest='command')
@@ -82,6 +82,12 @@ def cli():
     if len(sys.argv) == 1 or sys.argv[1] not in ['predict']:
         sys.argv.insert(1, 'predict')
 
+    # args = parser.parse_args()
+    # return args
+    return parser
+
+def cli():
+    parser = get_monoloco_parser
     args = parser.parse_args()
     return args
-
+    
