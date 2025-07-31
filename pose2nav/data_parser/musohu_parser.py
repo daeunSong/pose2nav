@@ -134,7 +134,7 @@ class MuSoHuParser:
                 if bag.get_message_count(pc) > 0:
                     pctopic = pc
                     break
-        if not (imtopic and actiontopic and odomtopic and dptopic and pctopic):
+        if not (imtopic and actiontopic and odomtopic):
             # bag doesn't have topics
             return None, None, None, None
 
@@ -168,8 +168,8 @@ class MuSoHuParser:
                 curr_actiondata = msg
             elif topic == dptopic:
                 curr_depthdata = msg
-            elif topic == pctopic:
-                curr_pcdata = process_pointclouds(msg)
+            # elif topic == pctopic:
+            #     curr_pcdata = process_pointclouds(msg)
 
             if (t.to_sec() - currtime) >= 1.0 / rate:
                 if (
@@ -177,19 +177,20 @@ class MuSoHuParser:
                     and curr_odomdata is not None
                     and curr_depthdata is not None
                     and curr_actiondata is not None
-                    and curr_pcdata is not None
+                    # and curr_pcdata is not None
                 ):
                     synced_imdata.append(curr_imdata)
                     synced_odomdata.append(curr_odomdata)
                     synced_actiondata.append(curr_actiondata)
                     synced_depthdata.append(curr_depthdata)
-                    synced_pcdata.append(curr_pcdata)
+                    # synced_pcdata.append(curr_pcdata)
                 currtime = t.to_sec()
                 times.append(currtime - starttime)
 
         img_data = self.process_images(synced_imdata, img_process_func)
         depth_data = self.process_images(synced_depthdata, depth_process_func)
-        pc_data = synced_pcdata
+        # pc_data = synced_pcdata
+        pc_data = None
 
         traj_data: dict = self.process_odom(
             synced_odomdata,
@@ -264,7 +265,8 @@ class MuSoHuParser:
         cut_trajs = filter_backwards(
             bag_img_data, bag_traj_data, bag_depth_data, bag_pc_data
         )
-        for i, (img_data_i, traj_data_i, depth_data_i, pc_data_i) in enumerate(
+        # for i, (img_data_i, traj_data_i, depth_data_i, pc_data_i) in enumerate(
+        for i, (img_data_i, traj_data_i, depth_data_i) in enumerate(
             cut_trajs
         ):
             if len(img_data_i) < self.cfg.skip_traj_shorter:
@@ -304,6 +306,6 @@ class MuSoHuParser:
             for i, img in enumerate(depth_data_i):
                 img.save(os.path.join(output_depth, f"{i}.jpg"))
             # save the pc data to disk
-            for i, pc in enumerate(pc_data_i):
-                pc = PyntCloud(pc)
-                pc.to_file(os.path.join(output_pc, f"{i}.ply"))
+            # for i, pc in enumerate(pc_data_i):
+            #     pc = PyntCloud(pc)
+            #     pc.to_file(os.path.join(output_pc, f"{i}.ply"))

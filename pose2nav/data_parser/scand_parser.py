@@ -19,6 +19,8 @@ import pandas as pd
 
 from utils.parser_utils import *
 
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 class SCANDParser:
     def __init__(self, cfg):
@@ -57,7 +59,7 @@ class SCANDParser:
         return {"position": np.array(xys, dtype=np.float32), "yaw": np.array(yaws, dtype=np.float32), "vw": np.array(vws, dtype=np.float32),
         "angle": np.array(angles, dtype=np.float32)}
 
-    def get_images_and_odom(
+    def parse_data(
         self,
         bag: rosbag.Bag,
         imtopics: Union[list[str], str],
@@ -122,7 +124,7 @@ class SCANDParser:
                 if bag.get_message_count(pc) > 0:
                     pctopic = pc
                     break
-        if not (imtopic and actiontopic and odomtopic and pctopic):
+        if not (imtopic and actiontopic and odomtopic):
             # bag doesn't have topics
             return None, None, None
 
@@ -153,25 +155,26 @@ class SCANDParser:
                 curr_odomdata = msg
             elif topic == actiontopic:
                 curr_actiondata = msg
-            elif topic == pctopic:
-                curr_pcdata = process_pointclouds(msg)
+            # elif topic == pctopic:
+                # curr_pcdata = process_pointclouds(msg)
 
             if (t.to_sec() - currtime) >= 1.0 / rate:
                 if (
                     curr_imdata is not None
                     and curr_odomdata is not None
                     and curr_actiondata is not None
-                    and curr_pcdata is not None
+                    # and curr_pcdata is not None
                 ):
                     synced_imdata.append(curr_imdata)
                     synced_odomdata.append(curr_odomdata)
                     synced_actiondata.append(curr_actiondata)
-                    synced_pcdata.append(curr_pcdata)
+                    # synced_pcdata.append(curr_pcdata)
                 currtime = t.to_sec()
                 times.append(currtime - starttime)
 
         img_data = self.process_images(synced_imdata, img_process_func)
-        pc_data = synced_pcdata
+        # pc_data = synced_pcdata
+        pc_data = None
 
         traj_data = self.process_odom(
             synced_odomdata,
@@ -195,6 +198,8 @@ class SCANDParser:
         traj_data["position"][:, 1] = savgol_filter(
             traj_data["position"][:, 1], window_length=31, polyorder=3, mode="nearest"
         )
+
+        return img_data, traj_data, pc_data
 
     def parse_bags(self, bag_path) -> None:
         # id = 0
@@ -225,7 +230,7 @@ class SCANDParser:
             bag_img_data,
             bag_traj_data,
             bag_pc_data,
-        ) = self.get_images_and_odom(
+        ) = self.parse_data(
             b,
             self.cfg.topics.rgb,
             self.cfg.topics.odom,
@@ -245,7 +250,8 @@ class SCANDParser:
         # print(f"Working on bag: {bag_path}")
         # remove backwards movement
         cut_trajs = filter_backwards_scand(bag_img_data, bag_traj_data, bag_pc_data)
-        for i, (img_data_i, traj_data_i, pc_data_i) in enumerate(cut_trajs):
+        # for i, (img_data_i, traj_data_i, pc_data_i) in enumerate(cut_trajs):
+        for i, (img_data_i, traj_data_i) in enumerate(cut_trajs):
             if len(img_data_i) < self.cfg.skip_traj_shorter:
                 # skip trajectories with less than 20 frames
                 continue
@@ -275,6 +281,6 @@ class SCANDParser:
             for j, img in enumerate(img_data_i):
                 img.save(os.path.join(output_rgb, f"{j}.jpg"))
             # save the pc data to disk
-            for j, pc in enumerate(pc_data_i):
-                pc = PyntCloud(pc)
-                pc.to_file(os.path.join(output_pc, f"{j}.ply"))
+            # for j, pc in enumerate(pc_data_i):
+            #     pc = PyntCloud(pc)
+            #     pc.to_file(os.path.join(output_pc, f"{j}.ply"))

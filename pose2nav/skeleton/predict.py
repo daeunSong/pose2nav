@@ -24,8 +24,6 @@ class PoseEstimatorNode:
     def __init__(self):
         # Parse ROS arguments
         # self.args = args
-
-        rospy.init_node('pose_estimator_node')
         self.img = None
 
         ## Arguent for MMPOSE
@@ -44,7 +42,7 @@ class PoseEstimatorNode:
         self.monoloco_predictor = MonoLocoPredictor(self.monoloco_args)
         self.monoloco_args.focal_length = 5.0
         
-        rospy.loginfo("3D Pose Estimator Node Initialized")
+        print(f"[INFO] 3D Pose Estimator Node Initialized")
 
     def transform_points(self, points, translation_vector = [0., 0., 0.], angle_deg = -15):
         """Apply 3D rotation and translation to points.

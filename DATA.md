@@ -63,13 +63,18 @@ pose2nav/
 
 To run the MuSoHu parser, from the root directory of the project run:
 ```bash
-python pose2nav/data_parser/parser.py --name musohu --conf pose2nav/config/parser -kp
+python pose2nav/data_parser/parser.py --name musohu --conf pose2nav/config/parser
 ```
 
 And to run SCAND parser, change the parser argument to `scand` like:
 ```bash
-python pose2nav/data_parser/parser.py --name scand --conf pose2nav/config/parser -kp
+python pose2nav/data_parser/parser.py --name scand --conf pose2nav/config/parser
 ```
 We only store the front facing camera for the Spot in SCAND, so both MuSoHu and SCAND have the *same* interface. The only difference is that SCAND does not contain depth data.
 
 `-kp` for parsing the keypoints
+
+
+```bash
+python pose2nav/data_parser/parser.py --conf pose2nav/config/parser -cs -kp
+```

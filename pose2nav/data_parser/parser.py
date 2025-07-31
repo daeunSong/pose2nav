@@ -13,6 +13,7 @@ import numpy as np
 from utils.helpers import get_conf
 from data_parser.musohu_parser import MuSoHuParser
 from data_parser.scand_parser import SCANDParser
+from data_parser.sbpd_parser import SBPDParser
 from utils.parser_utils import poly_fit
 
 from skeleton.predict import PoseEstimatorNode
@@ -25,6 +26,7 @@ def create_samples(input_path, obs_window: int = 6, pred_window: int = 8, linear
     obs_window (int): observation window (history)
     pred_window (int): prediction window
     """
+    print(f"input_path: {input_path}")
     with input_path.open("rb") as f:
         data = pickle.load(f)
 
@@ -123,32 +125,33 @@ if __name__ == "__main__":
     # dataset = "musohu" if "musohu" in cfg_dir.lower() else "scand"
     dataset = args.name
     if args.create_samples:
-        # Creating samples
-        save_path = Path(cfg.parsed_dir) / "samples.pkl"
-        # if (save_path).exists():
-        #     print("Save path exists!")
-        #     save_path.rename(f"{cfg.parsed_dir}/{save_path.stem}_new{save_path.suffix}")
-        # List all the pickle files
-        list_pickles = list(save_path.parent.glob("**/*.pkl"))
-        # list_pickles = [x for x in Path(cfg.save_dir).iterdir() if x.suffix == '.pkl']
-        # Base dictionary to store data
-        base_dict = dict()
-        # Iterate over processed files and create samples from them
-        bar = tqdm(list_pickles, desc="Creating samples: ")
-        for file_name in bar:
-            bar.set_postfix(Trajectory=f"{file_name}")
-            post_processed = create_samples(
-                file_name, obs_window=cfg.obs_len, pred_window=cfg.pred_len, linear_threshold=cfg.linear_threshold
-            )
-            if bool(base_dict):
-                base_dict = merge(base_dict, post_processed)
-            else:
-                base_dict = post_processed
+        print(f"Create Samples")
+        # # Creating samples
+        # save_path = Path(cfg.parsed_dir) / "samples.pkl"
+        # # if (save_path).exists():
+        # #     print("Save path exists!")
+        # #     save_path.rename(f"{cfg.parsed_dir}/{save_path.stem}_new{save_path.suffix}")
+        # # List all the pickle files
+        # list_pickles = list(save_path.parent.glob("**/traj_data.pkl"))
+        # # list_pickles = [x for x in Path(cfg.save_dir).iterdir() if x.suffix == '.pkl']
+        # # Base dictionary to store data
+        # base_dict = dict()
+        # # Iterate over processed files and create samples from them
+        # bar = tqdm(list_pickles, desc="Creating samples: ")
+        # for file_name in bar:
+        #     bar.set_postfix(Trajectory=f"{file_name}")
+        #     post_processed = create_samples(
+        #         file_name, obs_window=cfg.obs_len, pred_window=cfg.pred_len, linear_threshold=cfg.linear_threshold
+        #     )
+        #     if bool(base_dict):
+        #         base_dict = merge(base_dict, post_processed)
+        #     else:
+        #         base_dict = post_processed
 
-        # Saving the final file
-        print(f"Created {len(base_dict['past_frames'])} samples from data in {save_path.parent} directory!")
-        with save_path.open("wb") as f:
-            pickle.dump(base_dict, f)
+        # # Saving the final file
+        # print(f"Created {len(base_dict['past_frames'])} samples from data in {save_path.parent} directory!")
+        # with save_path.open("wb") as f:
+        #     pickle.dump(base_dict, f)
     else:
         if dataset == "musohu":
             cfg.musohu.update({"sample_rate": cfg.sample_rate})
@@ -157,7 +160,13 @@ if __name__ == "__main__":
             bag_files = Path(data_parser.cfg.bags_dir).resolve()
             bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".bag"]
             # if there are ram limitations, reduce the number of max_workers
-            process_map(data_parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
+            # process_map(data_parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
+            for bag in tqdm(bag_files):
+                try:
+                    data_parser.parse_bags(bag)
+                    print(f"[Info] Done parisng {bag}")
+                except Exception as e:
+                    print(f"[ERROR] Crashed on {bag}")
 
         elif dataset == "scand":
             cfg.scand.update({"sample_rate": cfg.sample_rate})
@@ -165,20 +174,40 @@ if __name__ == "__main__":
             data_parser = SCANDParser(cfg.scand)
             bag_files = Path(data_parser.cfg.bags_dir).resolve()
             bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".bag"]
-            process_map(data_parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
+            # process_map(data_parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
+            for bag in tqdm(bag_files):
+                try:
+                    data_parser.parse_bags(bag)
+                    print(f"[Info] Done parisng {bag}")
+                except Exception as e:
+                    print(f"[ERROR] Crashed on {bag}")
+        
+        elif dataset == "sbpd":
+            cfg.scand.update({"sample_rate": cfg.sample_rate})
+            cfg.scand.update({"save_dir": cfg.parsed_dir})
+            data_parser = SBPDParser(cfg.scenario_based)
+            bag_files = Path(data_parser.cfg.bags_dir).resolve()
+            bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".db3"]
+            # process_map(data_parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
+            for bag in tqdm(bag_files):
+                try:
+                    data_parser.parse_bags(bag)
+                    print(f"[Info] Done parisng {bag}")
+                except Exception as e:
+                    print(f"[ERROR] Crashed on {bag}")
         else:
             raise Exception("Invalid dataset!")
-        
-        if args.parse_keypoints:
+    
+    if args.parse_keypoints:
             # Run skeletal keypoints parsing
             keypoint_model = PoseEstimatorNode()
 
             processed_dir = Path(cfg.parsed_dir)
             folders = [x for x in processed_dir.iterdir() if x.is_dir()]
 
-            for folder in tqdm(folders, desc=f"Parsing keypoints for {folder.name}"):
+            for folder in tqdm(folders):
                 rgb_dir = folder / "rgb"
-                rgb_images = rgb_dir.glob("*.jpg")
+                rgb_images = sorted(rgb_dir.glob("*.jpg"))
 
                 keypoints_output = []
                 keypoints_dir = folder / "keypoints"
@@ -196,7 +225,7 @@ if __name__ == "__main__":
 
                         # Save output image as JPEG
                         output_img_bgr = cv2.cvtColor(output_img, cv2.COLOR_RGB2BGR)  # Convert back to BGR for saving
-                        img_save_path = keypoints_dir / f"{idx}.jpg"
+                        img_save_path = keypoints_dir / img_path.name
                         cv2.imwrite(str(img_save_path), output_img_bgr)
 
                         # Save keypoint data
@@ -212,11 +241,5 @@ if __name__ == "__main__":
                 save_path = keypoints_dir / "keypoints_data.pkl"
                 with save_path.open("wb") as f:
                     pickle.dump(keypoints_output, f)
-
-                
-
-                
-
-
-
+                print(f"[Info] Done parisng {folder}")
 
