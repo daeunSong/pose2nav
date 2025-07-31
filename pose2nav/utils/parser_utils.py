@@ -184,7 +184,8 @@ def filter_backwards(
     start = True
 
     def process_pair(traj_pair: list) -> tuple[list, dict, list, list]:
-        new_img_list, new_traj_data, new_depth_list, new_pc_list = zip(*traj_pair)
+        # new_img_list, new_traj_data, new_depth_list, new_pc_list = zip(*traj_pair)
+        new_img_list, new_traj_data, new_depth_list= zip(*traj_pair)
         new_traj_data = np.array(new_traj_data)
         new_traj_pos = new_traj_data[:, :3]
         new_traj_vws = new_traj_data[:, 3:5]
@@ -194,7 +195,7 @@ def filter_backwards(
             new_img_list,
             {"position": new_traj_pos.tolist(), "yaw": new_traj_yaws.tolist(), "vw": new_traj_vws.tolist(), "angle": new_traj_angles.tolist()},
             new_depth_list,
-            new_pc_list,
+            # new_pc_list,
         )
 
     for i in range(max(start_slack, 1), len(traj_pos) - end_slack):
@@ -208,7 +209,7 @@ def filter_backwards(
                         img_list[i - 1],
                         [*traj_pos[i - 1], *traj_actions[i - 1], traj_yaws[i - 1], *traj_angles[i - 1]],
                         depth_list[i - 1],
-                        pc_list[i - 1],
+                        # pc_list[i - 1],
                     )
                 ]
                 start = False
@@ -220,7 +221,7 @@ def filter_backwards(
                         img_list[i - 1],
                         [*traj_pos[i - 1], *traj_actions[i - 1], traj_yaws[i - 1], *traj_angles[i - 1]],
                         depth_list[i - 1],
-                        pc_list[i - 1],
+                        # pc_list[i - 1],
                     )
                 )
         elif not start:
@@ -256,7 +257,8 @@ def filter_backwards_scand(
     start = True
 
     def process_pair(traj_pair: list) -> tuple[list, dict, list, list]:
-        new_img_list, new_traj_data, new_pc_list = zip(*traj_pair)
+        # new_img_list, new_traj_data, new_pc_list = zip(*traj_pair)
+        new_img_list, new_traj_data = zip(*traj_pair)
         new_traj_data = np.array(new_traj_data)
         new_traj_pos = new_traj_data[:, :3]
         new_traj_vws = new_traj_data[:, 3:5]
@@ -265,7 +267,7 @@ def filter_backwards_scand(
         return (
             new_img_list,
             {"position": new_traj_pos.tolist(), "yaw": new_traj_yaws.tolist(), "vw": new_traj_vws.tolist(), "angle": new_traj_angles.tolist()},
-            new_pc_list,
+            # new_pc_list,
         )
 
     for i in range(max(start_slack, 1), len(traj_pos) - end_slack):
@@ -278,7 +280,7 @@ def filter_backwards_scand(
                     (
                         img_list[i - 1],
                         [*traj_pos[i - 1], *traj_actions[i - 1], traj_yaws[i - 1], *traj_angles[i - 1]],
-                        pc_list[i - 1],
+                        # pc_list[i - 1],
                     )
                 ]
                 start = False
@@ -289,10 +291,48 @@ def filter_backwards_scand(
                     (
                         img_list[i - 1],
                         [*traj_pos[i - 1], *traj_actions[i - 1], traj_yaws[i - 1], *traj_angles[i - 1]],
-                        pc_list[i - 1],
+                        # pc_list[i - 1],
                     )
                 )
         elif not start:
             cut_trajs.append(process_pair(new_traj_pairs))
             start = True
     return cut_trajs
+
+def package_sbpd(
+    img_list: list,
+    traj_data: dict,
+) -> list[tuple[list, dict]]:
+    """
+    Wrap the full trajectory data into the same format as filter_backwards_scand,
+    but without cutting or filtering.
+
+    Args:
+        img_list: list of images
+        traj_data: dictionary of position, yaw, vw, angle
+
+    Returns:
+        A list with one tuple: (list of images, trajectory dictionary)
+    """
+    traj_pos = traj_data["position"]
+    traj_yaws = traj_data["yaw"]
+    traj_vws = traj_data["vw"]
+    traj_angles = traj_data["angle"]
+
+    new_traj_data = []
+    for i in range(len(traj_pos)):
+        data = [*traj_pos[i], *traj_vws[i], traj_yaws[i], *traj_angles[i]]
+        new_traj_data.append(data)
+
+    new_traj_data = np.array(new_traj_data)
+    packaged = (
+        img_list,
+        {
+            "position": new_traj_data[:, :3].tolist(),
+            "vw": new_traj_data[:, 3:5].tolist(),
+            "yaw": new_traj_data[:, 5].tolist(),
+            "angle": new_traj_data[:, 5:9].tolist(),
+        },
+    )
+
+    return [packaged]
