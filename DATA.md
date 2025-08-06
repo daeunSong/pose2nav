@@ -72,9 +72,31 @@ python pose2nav/data_parser/parser.py --name scand --conf pose2nav/config/parser
 ```
 We only store the front facing camera for the Spot in SCAND, so both MuSoHu and SCAND have the *same* interface. The only difference is that SCAND does not contain depth data.
 
+
+### Keypoints Data
+
+```
+{
+  "labels": {
+    "0.jpg": [
+      {
+        "label_id": "pedestrian:0",
+        "keypoints_3d": [[x, y, z], ..., [x, y, z]],
+        "root_3d": [x, y, z],
+        "keypoints_2d": [[x, y], ..., [x, y]]
+      },
+      ...
+    ],
+    ...
+  }
+}
+```
+
 `-kp` for parsing the keypoints
 
 
 ```bash
-python pose2nav/data_parser/parser.py --conf pose2nav/config/parser -cs -kp
+python pose2nav/data_parser/parser.py --conf pose2nav/config/parser -kp
 ```
+
+## Creating Samples

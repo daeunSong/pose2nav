@@ -19,6 +19,7 @@ from _monoloco import *
 from _monoloco.config.arg import get_monoloco_parser
 from _monoloco.process import load_calibration
 from _monoloco.utils import pixel_to_camera_pt
+from _monoloco.printer import BirdEyeViewPlot, draw_orientation, draw_uncertainty
 
 class PoseEstimatorNode:
     def __init__(self):
@@ -76,6 +77,7 @@ class PoseEstimatorNode:
 
         boxes = []
         keypoints = []
+        track_id = []
         
         for i, data in enumerate(pose_est_result):
             xs = []
@@ -95,11 +97,42 @@ class PoseEstimatorNode:
                 cs.append(conf[j])
             boxes.append(box)
             keypoints.append([xs, ys, cs])
+            track_id.append(data.track_id)
 
-        im_size = (data.img_shape[1], data.img_shape[0])
+        # im_size = (data.img_shape[1], data.img_shape[0])
 
-        return boxes, keypoints, im_size
+        return boxes, keypoints, track_id
+
+    def generate_topdown_image(self, dic_out, len_3d_keypoints):
+        """
+        Generate a top-down (bird's-eye) view image from MonoLoco output.
+
+        Args:
+            dic_out (dict): Output dictionary from MonoLoco post-processing.
         
+        Returns:
+            np.ndarray: RGB image as NumPy array (H, W, 3)
+        """
+        # Create canvas
+        z_max = 12 #min(10, 4 + max(el[1] for el in xz_centers))
+        plotter = BirdEyeViewPlot(z_max)
+        ax = plotter.get_axis()
+
+        if len_3d_keypoints != 0:
+            # Extract XZ centers from 3D predictions
+            xz_centers = [[xyz[0], xyz[2]] for xyz in dic_out['xyz_pred']]  # [Z, X, Y] → [Z, Y] → [Z, X]
+
+            # Orientation, uncertainty, and color info
+            angles = dic_out['angles']
+            stds = dic_out['stds_ale']
+            colors = ['deepskyblue' for _ in dic_out['uv_heads']]
+
+            # draw
+            draw_orientation(ax, xz_centers, [], angles, colors, mode='bird')
+            draw_uncertainty(ax, xz_centers, stds)
+
+        # 5. Return image
+        return plotter.render()    
 
     def predict(self, image):
 
@@ -112,47 +145,55 @@ class PoseEstimatorNode:
         # + STEP3: [mmpose] 3D pose estimation -> pred_3d_instances
         pose_est_results_list = []
         pose_est_result, _, pred_3d_instances, _  = self.mmpose_predictor.process_one_image(self.mmpose_args, img_mmcv, pose_est_results_list=pose_est_results_list)
-      
-        # convert mmpose result to monoloco format -> xyz_pred
-        boxes, keypoints_2d, im_size = self.preprocess_monoloco(pose_est_result)
 
-        # STEP2: [monoloco] predict 3D depth
-        kk = load_calibration(im_size, self.monoloco_args.focal_length)
+        if pred_3d_instances is None or len(pred_3d_instances.keypoints) == 0:
+            boxes, keypoints_2d, track_id = [], [], []
+            keypoints = np.zeros((0, 17, 3))
+            keypoints_3d, xyzs = [], []
+            dic_out = {"xyz_pred": []}
+        
+        else:
+            # convert mmpose result to monoloco format -> xyz_pred
+            boxes, keypoints_2d, track_id = self.preprocess_monoloco(pose_est_result)
 
-        dic_out = self.monoloco_predictor.net.forward(keypoints_2d, kk)
-        dic_out = self.monoloco_predictor.net.post_process(
-            dic_out, boxes, keypoints_2d, kk)
+            # STEP2: [monoloco] predict 3D depth
+            kk = load_calibration((img_mmcv.shape[1],img_mmcv.shape[0]), self.monoloco_args.focal_length)
 
-        xyz_pred = dic_out["xyz_pred"] # 3D depth
-        keypoints_2d = np.array(keypoints_2d)[:, :2, :].transpose(0, 2, 1) # reshape (n, 3, 17) -> (n, 17, 2)
+            dic_out = self.monoloco_predictor.net.forward(keypoints_2d, kk)
+            dic_out = self.monoloco_predictor.net.post_process(
+                dic_out, boxes, keypoints_2d, kk)
 
-        ##### STEP4: post-processing
-       
-        # 3D keypoints
-        keypoints = pred_3d_instances.keypoints
-        keypoints = np.stack([-keypoints[..., 1], keypoints[..., 0], keypoints[..., 2]], axis=-1)   
+            xyz_pred = dic_out["xyz_pred"] # 3D depth
+            keypoints_2d = np.array(keypoints_2d)[:, :2, :].transpose(0, 2, 1) # reshape (n, 3, 17) -> (n, 17, 2)
 
-        fwd_time = (time.time()-start)*1000
-        timing.append(fwd_time)  
+            ##### STEP4: post-processing
+            # 3D keypoints
+            keypoints = pred_3d_instances.keypoints
+            keypoints = np.stack([-keypoints[..., 1], keypoints[..., 0], keypoints[..., 2]], axis=-1)   
 
-        xyzs = []
-        # [mmpose] + [monoloco] All poses in 3D
-        keypoints_3d = [] 
-        for i, keypoint in enumerate(keypoints):
-            xyz = xyz_pred[i]
-            xyz = [xyz[2], -xyz[0], xyz[1] + 0.1]
+            fwd_time = (time.time()-start)*1000
+            timing.append(fwd_time)  
 
-            # if self.args.robot == 'jackal':
-            #     xyz = self.transform_points(xyz, [0., 0., 0.], -15)
+            xyzs = []
+            # [mmpose] + [monoloco] All poses in 3D
+            keypoints_3d = [] 
+            for i, keypoint in enumerate(keypoints):
+                xyz = xyz_pred[i]
+                xyz = [xyz[2], -xyz[0], xyz[1] + 0.1]
 
-            keypoint_3d = []
-            translation_vector = xyz #- keypoint[0]
+                # if self.args.robot == 'jackal':
+                #     xyz = self.transform_points(xyz, [0., 0., 0.], -15)
 
-            for j, point in enumerate(keypoint): 
-                kpt_3d = self.transform_points(point - keypoint[0], translation_vector)
-                keypoint_3d.append(kpt_3d)
-            keypoints_3d.append(keypoint_3d)
-            xyzs.append(xyz)
+                keypoint_3d = []
+                translation_vector = xyz #- keypoint[0]
+
+                for j, point in enumerate(keypoint): 
+                    kpt_3d = self.transform_points(point - keypoint[0], translation_vector)
+                    keypoint_3d.append(kpt_3d)
+                keypoints_3d.append(keypoint_3d)
+                xyzs.append(xyz)
+
+        topdown_img = self.generate_topdown_image(dic_out, len(keypoints_3d))
 
         # visualizing 2D output
         input_img = img_mmcv.copy()
@@ -168,8 +209,26 @@ class PoseEstimatorNode:
             out_file=None  
         )
         output_img = self.mmpose_visualizer.get_image()
+
+        # draw bbox score
+        for res in pose_est_result:
+            if hasattr(res.pred_instances, 'bboxes') and hasattr(res.pred_instances, 'bbox_scores'):
+                for bbox, score in zip(res.pred_instances.bboxes, res.pred_instances.bbox_scores):
+                    x1, y1, x2, y2 = map(int, bbox)
+                    cv2.putText(
+                        output_img,
+                        f'{score:.2f}',
+                        (x1, y1 - 10),
+                        fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                        fontScale=0.5,
+                        color=(0, 255, 0),
+                        thickness=1
+                    )
+
+        # save the result
+        cv2.imwrite('vis_with_bbox_score.jpg', output_img)
         
-        return keypoints_3d, xyzs, keypoints_2d, output_img
+        return keypoints_3d, xyzs, keypoints_2d, track_id, output_img, topdown_img
         # xyz: root position of humans
 
 

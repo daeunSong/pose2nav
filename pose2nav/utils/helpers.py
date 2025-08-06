@@ -69,86 +69,86 @@ def init_device(cfg: DictConfig):
         raise ValueError(f"Unknown {device}!")
 
 
-# def init_logger(cfg: DictConfig):
-#     """Initializes the cometml logger
+def init_logger(cfg: DictConfig):
+    """Initializes the cometml logger
 
-#     Args:
-#         cfg: (DictConfig) the configuration
-#     """
-#     print(f"{datetime.now():%Y-%m-%d %H:%M:%S} - INITIALIZING the logger!")
-#     logger = None
-#     cfg_full = cfg
-#     cfg = cfg.logger
-#     # Check to see if there is a key in environment:
-#     EXPERIMENT_KEY = cfg.experiment_key
+    Args:
+        cfg: (DictConfig) the configuration
+    """
+    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} - INITIALIZING the logger!")
+    logger = None
+    cfg_full = cfg
+    cfg = cfg.logger
+    # Check to see if there is a key in environment:
+    EXPERIMENT_KEY = cfg.experiment_key
 
-#     # First, let's see if we continue or start fresh:
-#     CONTINUE_RUN = cfg.resume
-#     if EXPERIMENT_KEY and CONTINUE_RUN:
-#         # There is one, but the experiment might not exist yet:
-#         api = comet_ml.API()  # Assumes API key is set in config/env
-#         try:
-#             api_experiment = api.get_experiment_by_id(EXPERIMENT_KEY)
-#         except Exception:
-#             api_experiment = None
-#         if api_experiment is not None:
-#             CONTINUE_RUN = True
-#             # We can get the last details logged here, if logged:
-#             # step = int(api_experiment.get_parameters_summary("batch")["valueCurrent"])
-#             # epoch = int(api_experiment.get_parameters_summary("epochs")["valueCurrent"])
+    # First, let's see if we continue or start fresh:
+    CONTINUE_RUN = cfg.resume
+    if EXPERIMENT_KEY and CONTINUE_RUN:
+        # There is one, but the experiment might not exist yet:
+        api = comet_ml.API()  # Assumes API key is set in config/env
+        try:
+            api_experiment = api.get_experiment_by_id(EXPERIMENT_KEY)
+        except Exception:
+            api_experiment = None
+        if api_experiment is not None:
+            CONTINUE_RUN = True
+            # We can get the last details logged here, if logged:
+            # step = int(api_experiment.get_parameters_summary("batch")["valueCurrent"])
+            # epoch = int(api_experiment.get_parameters_summary("epochs")["valueCurrent"])
 
-#     if CONTINUE_RUN:
-#         # 1. Recreate the state of ML system before creating experiment
-#         # otherwise it could try to log params, graph, etc. again
-#         # ...
-#         # 2. Setup the existing experiment to carry on:
-#         logger = comet_ml.ExistingExperiment(
-#             previous_experiment=EXPERIMENT_KEY,
-#             log_env_details=cfg.log_env_details,  # to continue env logging
-#             log_env_gpu=True,  # to continue GPU logging
-#             log_env_cpu=True,  # to continue CPU logging
-#             auto_histogram_weight_logging=True,
-#             auto_histogram_gradient_logging=True,
-#             auto_histogram_activation_logging=True,
-#         )
-#         # Retrieved from above APIExperiment
-#         # self.logger.set_epoch(epoch)
+    if CONTINUE_RUN:
+        # 1. Recreate the state of ML system before creating experiment
+        # otherwise it could try to log params, graph, etc. again
+        # ...
+        # 2. Setup the existing experiment to carry on:
+        logger = comet_ml.ExistingExperiment(
+            previous_experiment=EXPERIMENT_KEY,
+            log_env_details=cfg.log_env_details,  # to continue env logging
+            log_env_gpu=True,  # to continue GPU logging
+            log_env_cpu=True,  # to continue CPU logging
+            auto_histogram_weight_logging=True,
+            auto_histogram_gradient_logging=True,
+            auto_histogram_activation_logging=True,
+        )
+        # Retrieved from above APIExperiment
+        # self.logger.set_epoch(epoch)
 
-#     else:
-#         # 1. Create the experiment first
-#         #    This will use the COMET_EXPERIMENT_KEY if defined in env.
-#         #    Otherwise, you could manually set it here. If you don't
-#         #    set COMET_EXPERIMENT_KEY, the experiment will get a
-#         #    random key!
-#         if cfg.online:
-#             logger = comet_ml.Experiment(
-#                 disabled=cfg.disabled,
-#                 project_name=cfg.project,
-#                 log_env_details=cfg.log_env_details,
-#                 log_env_gpu=True,  # to continue GPU logging
-#                 log_env_cpu=True,  # to continue CPU logging
-#                 auto_histogram_weight_logging=True,
-#                 auto_histogram_gradient_logging=True,
-#                 auto_histogram_activation_logging=True,
-#             )
-#             logger.set_name(cfg.experiment_name)
-#             logger.add_tags(cfg.tags.split())
-#             logger.log_parameters(cfg_full)
-#         else:
-#             logger = comet_ml.OfflineExperiment(
-#                 disabled=cfg.disabled,
-#                 project_name=cfg.project,
-#                 offline_directory=cfg.offline_directory,
-#                 auto_histogram_weight_logging=True,
-#                 log_env_details=cfg.log_env_details,
-#                 log_env_gpu=True,  # to continue GPU logging
-#                 log_env_cpu=True,  # to continue CPU logging
-#             )
-#             logger.set_name(cfg.experiment_name)
-#             logger.add_tags(cfg.tags.split())
-#             logger.log_parameters(cfg_full)
+    else:
+        # 1. Create the experiment first
+        #    This will use the COMET_EXPERIMENT_KEY if defined in env.
+        #    Otherwise, you could manually set it here. If you don't
+        #    set COMET_EXPERIMENT_KEY, the experiment will get a
+        #    random key!
+        if cfg.online:
+            logger = comet_ml.Experiment(
+                disabled=cfg.disabled,
+                project_name=cfg.project,
+                log_env_details=cfg.log_env_details,
+                log_env_gpu=True,  # to continue GPU logging
+                log_env_cpu=True,  # to continue CPU logging
+                auto_histogram_weight_logging=True,
+                auto_histogram_gradient_logging=True,
+                auto_histogram_activation_logging=True,
+            )
+            logger.set_name(cfg.experiment_name)
+            logger.add_tags(cfg.tags.split())
+            logger.log_parameters(cfg_full)
+        else:
+            logger = comet_ml.OfflineExperiment(
+                disabled=cfg.disabled,
+                project_name=cfg.project,
+                offline_directory=cfg.offline_directory,
+                auto_histogram_weight_logging=True,
+                log_env_details=cfg.log_env_details,
+                log_env_gpu=True,  # to continue GPU logging
+                log_env_cpu=True,  # to continue CPU logging
+            )
+            logger.set_name(cfg.experiment_name)
+            logger.add_tags(cfg.tags.split())
+            logger.log_parameters(cfg_full)
 
-#     return logger
+    return logger
 
 def timeit(fn):
     """Calculate time taken by fn().
