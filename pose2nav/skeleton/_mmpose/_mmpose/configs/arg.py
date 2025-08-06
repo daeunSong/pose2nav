@@ -15,16 +15,21 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 # body_3d_keypoint/motionbert_dstformer-243frm_8xb32-240e_h36m-original.py
 # https://download.openmmlab.com/mmpose/v1/body_3d_keypoint/pose_lift/h36m/motionbert_h36m-f554954f_20230531.pth
 
+
 def get_mmpose_parser():
     parser = ArgumentParser()
     parser.add_argument(
         '--det_config', 
         type=str,
+        # default=os.path.join(current_dir,'mmdetection_cfg/faster-rcnn_x101-64x4d_fpn_1x_coco.py'),
+        # default=os.path.join(current_dir,'mmdetection_cfg/yolox_x_8xb8-300e_coco.py'),
         default=os.path.join(current_dir,'mmdetection_cfg/rtmdet_m_640-8xb32_coco-person.py'),
         help='Config file for detection')
     parser.add_argument(
         '--det_checkpoint',
         type=str, 
+        # default = 'https://download.openmmlab.com/mmdetection/v2.0/faster_rcnn/faster_rcnn_x101_64x4d_fpn_1x_coco/faster_rcnn_x101_64x4d_fpn_1x_coco_20200130-f51394e1.pth',
+        # default = 'https://download.openmmlab.com/mmdetection/v2.0/yolox/yolox_x_8x8_300e_coco/yolox_x_8x8_300e_coco_20211126_140254-1ef88d67.pth',
         default='https://download.openmmlab.com/mmpose/v1/projects/rtmpose/rtmdet_m_8xb32-100e_coco-obj365-person-235e8209.pth',
         help='Checkpoint file for detection')
     parser.add_argument(
@@ -40,12 +45,12 @@ def get_mmpose_parser():
     parser.add_argument(
         '--pose_lifter_config',
         type=str,
-        default=os.path.join(current_dir,'body_3d_keypoint/motionbert_dstformer-243frm_8xb32-240e_h36m-original.py'),
+        default=os.path.join(current_dir,'body_3d_keypoint/image-pose-lift_tcn_8xb64-200e_h36m.py'),
         help='Config file for the 2nd stage pose lifter model')
     parser.add_argument(
         '--pose_lifter_checkpoint',
         type=str,
-        default='https://download.openmmlab.com/mmpose/v1/body_3d_keypoint/pose_lift/h36m/motionbert_h36m-f554954f_20230531.pth',
+        default='https://download.openmmlab.com/mmpose/body3d/simple_baseline/simple3Dbaseline_h36m-f0ad73a4_20210419.pth',
         help='Checkpoint file for the 2nd stage pose lifter model')
     parser.add_argument('--input', type=str, default='', help='Video path')
     parser.add_argument(
@@ -97,7 +102,7 @@ def get_mmpose_parser():
     parser.add_argument(
         '--bbox-thr',
         type=float,
-        default=0.3,
+        default=0.6,
         help='Bounding box score threshold')
     parser.add_argument('--kpt-thr', type=float, default=0.3)
     parser.add_argument(

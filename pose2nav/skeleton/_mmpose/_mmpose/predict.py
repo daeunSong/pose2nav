@@ -346,6 +346,11 @@ class MMPosePredictor:
         bboxes = pred_instance.bboxes
         bboxes = bboxes[np.logical_and(pred_instance.labels == args.det_cat_id,
                                     pred_instance.scores > args.bbox_thr)]
+        # print(f"num bboxes = {len(bboxes)}")
+
+        if len(bboxes) == 0:
+            # If there is no human detected
+            return [], [], None, next_id
 
         # estimate pose results for current image
         pose_est_results = inference_topdown(self.pose_estimator, frame, bboxes)
