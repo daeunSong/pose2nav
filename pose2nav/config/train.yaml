@@ -1,0 +1,63 @@
+dataset:
+  index_file: "data/processed/samples/samples_train_index.json"
+  only_human_visable: true
+  resize: [192, 192]
+
+train_params:
+  seed: 42
+  batch_size: 16
+  epochs: 50
+  lr: 1e-4
+  weight_decay: 1e-5
+  num_workers: 4
+  save_every: 2
+  loss: vicreg
+  sample_ratio: 0.1
+  sample_seed: 42
+  amp: false
+  clip_grad_norm: 1.0
+
+model:
+  d: 256
+  human_pool_temp: 1.0
+  input:
+    T_obs: 6
+    T_pred: 6
+    N_human: 3
+    N_joints: 17
+  image_encoder:
+    name: resnet18
+    pretrained: true
+  obs_transformer:
+    layers: 3
+    heads: 4
+    ff_mult: 4
+    dropout: 0.1
+    norm: preln
+  projector:
+    use: true
+    d_out: 64
+    hidden: 2x
+    norm: layernorm
+  future_traj_encoder:
+    hidden: 256
+    num_layers: 1
+
+loss_params:
+  vicreg:
+    sim_w: 25.0
+    var_w: 25.0
+    cov_w: 1.0
+    eps: 1e-4
+  barlow:
+    lambd: 5e-3
+    eps: 1e-12
+
+directory:
+  model_dir: /home/songd/research/pose2nav/checkpoint/pretext/
+
+logger:
+  project: socialnav_pretext
+  entity: daeun-song-george-mason-university
+  mode: online
+  experiment_name: socialnav_pretext_${train_params.loss}_d${model.d}

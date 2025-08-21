@@ -185,3 +185,40 @@ def timeit(fn):
             return result, take
 
     return wrapper_fn
+
+def tensor_stats(name, t):
+    if not torch.is_tensor(t): return
+    with torch.no_grad():
+        fin = torch.isfinite(t)
+        msg = (f"{name}: shape={tuple(t.shape)} "
+               f"min={t.min().item() if fin.any() else 'nan'} "
+               f"max={t.max().item() if fin.any() else 'nan'} "
+               f"mean={t.mean().item() if fin.any() else 'nan'} "
+               f"std={t.std().item() if fin.any() else 'nan'} "
+               f"finite={fin.float().mean().item():.3f}")
+        print(msg)
+
+class NaNGuard:
+    def __init__(self, model):
+        self.hooks = []
+        for name, m in model.named_modules():
+            if len(list(m.children()))==0:  # leaf
+                self.hooks.append(m.register_forward_hook(self._hook(name)))
+    @staticmethod
+    def _hook(name):
+        def fn(mod, inp, out):
+            def check(x, tag):
+                if torch.is_tensor(x):
+                    if not torch.isfinite(x).all():
+                        print(f"[NaNGuard] {name} {tag} has NaN/Inf")
+                        tensor_stats(f"{name}.{tag}", x)
+                        raise FloatingPointError(f"NaN in {name} {tag}")
+            if isinstance(inp, (list, tuple)):
+                for i,x in enumerate(inp): check(x, f"in[{i}]")
+            else: check(inp, "in")
+            if isinstance(out, (list, tuple)):
+                for i,x in enumerate(out): check(x, f"out[{i}]")
+            else: check(out, "out")
+        return fn
+    def close(self):
+        for h in self.hooks: h.remove()

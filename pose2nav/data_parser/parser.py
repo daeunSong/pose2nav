@@ -12,9 +12,6 @@ import numpy as np
 import json
 
 from utils.helpers import get_conf
-from data_parser.musohu_parser import MuSoHuParser
-from data_parser.scand_parser import SCANDParser
-from data_parser.sbpd_parser import SBPDParser
 from utils.parser_utils import poly_fit
 from collections import defaultdict
 
@@ -156,7 +153,7 @@ def create_samples(input_path, obs_window: int = 6, pred_window: int = 8, linear
         "past_kp_3d": past_kp_3d,
         "future_kp_3d": future_kp_3d,
         "past_kp_2d": past_kp_2d,
-        "furture_kp_2d": future_kp_2d,
+        "future_kp_2d": future_kp_2d,
         "past_root_3d": past_root_3d,
         "future_root_3d": future_root_3d,
         "has_humans": has_humans,
@@ -298,7 +295,7 @@ if __name__ == "__main__":
     else:                 
         if args.create_samples:
             save_dir = Path(cfg.parsed_dir)
-            samples_dir = save_dir / "samples"
+            samples_dir = save_dir.parent / "samples"
             samples_dir.mkdir(exist_ok=True, parents=True)
 
             shard_size = 5000  # samples per shard file
@@ -360,6 +357,7 @@ if __name__ == "__main__":
         # Data Parsing
         else:
             if dataset == "musohu":
+                from data_parser.musohu_parser import MuSoHuParser
                 cfg.musohu.update({"sample_rate": cfg.sample_rate})
                 cfg.musohu.update({"save_dir": cfg.parsed_dir})
                 data_parser = MuSoHuParser(cfg.musohu)
@@ -375,6 +373,7 @@ if __name__ == "__main__":
                         print(f"[ERROR] Crashed on {bag}")
 
             elif dataset == "scand":
+                from data_parser.scand_parser import SCANDParser
                 cfg.scand.update({"sample_rate": cfg.sample_rate})
                 cfg.scand.update({"save_dir": cfg.parsed_dir})
                 data_parser = SCANDParser(cfg.scand)
@@ -389,18 +388,19 @@ if __name__ == "__main__":
                         print(f"[ERROR] Crashed on {bag}")
             
             # TODO: need to fix it into ROS2
-            # elif dataset == "sbpd":
-            #     cfg.scand.update({"sample_rate": cfg.sample_rate})
-            #     cfg.scand.update({"save_dir": cfg.parsed_dir})
-            #     data_parser = SBPDParser(cfg.sbpd)
-            #     bag_files = Path(data_parser.cfg.bags_dir).resolve()
-            #     bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".db3"]
-            #     # process_map(data_parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
-            #     for bag in tqdm(bag_files):
-            #         try:
-            #             data_parser.parse_bags(bag)
-            #             print(f"[Info] Done parisng {bag}")
-            #         except Exception as e:
-            #             print(f"[ERROR] Crashed on {bag}")
-            # else:
-            #     raise Exception("Invalid dataset!")
+            elif dataset == "sbpd":
+                from data_parser.sbpd_parser import SBPDParser
+                cfg.scand.update({"sample_rate": cfg.sample_rate})
+                cfg.scand.update({"save_dir": cfg.parsed_dir})
+                data_parser = SBPDParser(cfg.sbpd)
+                bag_files = Path(data_parser.cfg.bags_dir).resolve()
+                bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".db3"]
+                # process_map(data_parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
+                for bag in tqdm(bag_files):
+                    try:
+                        data_parser.parse_bags(bag)
+                        print(f"[Info] Done parisng {bag}")
+                    except Exception as e:
+                        print(f"[ERROR] Crashed on {bag}")
+            else:
+                raise Exception("Invalid dataset!")
