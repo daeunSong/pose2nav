@@ -2,6 +2,7 @@ dataset:
   index_file: "data/processed/samples/samples_train_index.json"
   only_human_visable: true
   resize: [192, 192]
+  metric_waypoint_spacing: 1.0
 
 train_params:
   seed: 42

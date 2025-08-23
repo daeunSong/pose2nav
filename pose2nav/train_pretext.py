@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 import wandb  # W&B
 
-from model.data_loader import PretextDataset
+from model.data_loader import SocialNavDataset
 from model.pretext_model import PretextModel
 from model.losses import get_loss_fn
 from utils.helpers import get_conf, tensor_stats, NaNGuard
@@ -42,7 +42,7 @@ class Learner:
             torch.cuda.manual_seed_all(seed)
 
     def init_data(self):
-        dataset = PretextDataset(
+        dataset = SocialNavDataset(
             index_file=getattr(self.cfg.dataset, "index_file", self.cfg.dataset.get("root", "")),
             train=True,
             only_human_visable=getattr(self.cfg.dataset, "only_human_visable", False),
@@ -266,4 +266,4 @@ if __name__ == "__main__":
     learner = Learner(args.cfg, use_wandb=not args.no_wandb)
     learner.train()
 
-# python pose2nav/train_pretext.py --cfg pose2nav/config/train.yaml
+# python pose2nav/train_pretext.py --cfg pose2nav/config/train_pretext.yaml
