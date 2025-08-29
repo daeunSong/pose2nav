@@ -328,9 +328,9 @@ class LearnerDownstream:
                 best_loss = loss
 
             if is_best or ((epoch + 1) % save_every == 0):
-                ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
+                timestamp  = datetime.now().strftime("%Y%m%d")
                 tag = "best" if is_best else f"e{epoch+1}"
-                name = f"{self.cfg.logger.experiment_name}"
+                name = f"{self.cfg.logger.experiment_name}_{timestamp}"
 
                 # rich downstream checkpoint
                 state = {
@@ -354,7 +354,7 @@ class LearnerDownstream:
                     artifact = wandb.Artifact(
                         name=f"{self.cfg.logger.experiment_name}_{tag}",
                         type="model",
-                        metadata={"epoch": epoch + 1, "loss": float(loss), "saved_at": ts},
+                        metadata={"epoch": epoch + 1, "loss": float(loss), "saved_at": timestamp},
                     )
                     artifact.add_file(ckpt_path)
                     wandb.log_artifact(artifact)

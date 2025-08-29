@@ -245,8 +245,9 @@ class Learner:
                 best_loss = avg_loss
 
             if is_best or ((epoch + 1) % save_every == 0):
+                timestamp  = datetime.now().strftime("%Y%m%d")
                 tag = "best" if is_best else f"e{epoch+1}"
-                name = f"{self.cfg.logger.experiment_name}"
+                name = f"{self.cfg.logger.experiment_name}_{timestamp}"
 
                 state = self._build_pretext_checkpoint(
                     epoch=epoch+1,
@@ -261,7 +262,7 @@ class Learner:
                     artifact = wandb.Artifact(
                         name=f"{self.cfg.logger.experiment_name}_{tag}",
                         type="model",
-                        metadata={"epoch": epoch + 1, "loss": float(avg_loss), "best": float(best_loss), "saved_at": ts},
+                        metadata={"epoch": epoch + 1, "loss": float(avg_loss), "best": float(best_loss), "saved_at": timestamp},
                     )
                     artifact.add_file(ckpt_path)
                     wandb.log_artifact(artifact)
