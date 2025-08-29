@@ -42,34 +42,66 @@ class ImageEncoder(nn.Module):
             self.encoder = nn.Sequential(*list(self.resnet.children())[:-1])  # remove FC
             resnet_out_dim = self._get_resnet_output_dim(self.backbone_name)
             self.fc = nn.Sequential(nn.Flatten(), nn.Linear(resnet_out_dim, output_dim), nn.LayerNorm(output_dim))
+        
+        elif self.backbone_name == "dino":
+            try:
+                import timm
+            except ImportError as e:
+                raise ImportError("Backbone 'dino' requires timm. Install with `pip install timm`.") from e
+
+            # Choose a sensible default DINO model; adjust if you prefer base/large.
+            model_name = "vit_small_patch16_224.dino"
+            self.dino = timm.create_model(model_name, pretrained=pretrained)
+            # Remove classifier head if present
+            if hasattr(self.dino, "reset_classifier"):
+                self.dino.reset_classifier(0)
+
+            embed_dim = getattr(self.dino, "embed_dim", None) or getattr(self.dino, "num_features", None)
+            if embed_dim is None:
+                raise ValueError(f"Could not infer embed_dim for DINO model '{model_name}'.")
+
+            # Project CLS embedding to output_dim
+            self.fc = nn.Sequential(
+                nn.LayerNorm(embed_dim),
+                nn.Linear(embed_dim, output_dim),
+                nn.LayerNorm(output_dim),
+            )
+        
         else:
             raise ValueError(f"Unsupported image backbone: {self.backbone_name}")
 
     def _load_resnet(self, name: str, pretrained: bool):
         # Support both old (pretrained=True) and new (weights=...) torchvision APIs
-        try:
-            if name == "resnet18":
-                from torchvision.models import ResNet18_Weights
-                return resnet18(weights=ResNet18_Weights.DEFAULT if pretrained else None)
-            if name == "resnet34":
-                from torchvision.models import ResNet34_Weights
-                return resnet34(weights=ResNet34_Weights.DEFAULT if pretrained else None)
-            if name == "resnet50":
-                from torchvision.models import ResNet50_Weights
-                return resnet50(weights=ResNet50_Weights.DEFAULT if pretrained else None)
-        except Exception:
-            # Fallback to deprecated API if needed
-            if name == "resnet18":
-                return resnet18(pretrained=pretrained)
-            if name == "resnet34":
-                return resnet34(pretrained=pretrained)
-            if name == "resnet50":
-                return resnet50(pretrained=pretrained)
+        if name == "resnet18":
+            from torchvision.models import ResNet18_Weights
+            return resnet18(weights=ResNet18_Weights.DEFAULT if pretrained else None)
+        if name == "resnet34":
+            from torchvision.models import ResNet34_Weights
+            return resnet34(weights=ResNet34_Weights.DEFAULT if pretrained else None)
+        if name == "resnet50":
+            from torchvision.models import ResNet50_Weights
+            return resnet50(weights=ResNet50_Weights.DEFAULT if pretrained else None)
+
 
     def _get_resnet_output_dim(self, name: str) -> int:
         return {"resnet18": 512, "resnet34": 512, "resnet50": 2048}[name]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: [B, 3, H, W]
+        if self.backbone_name == "dino":
+            feats = self.dino.forward_features(x)  # often [B, tokens, C] or [B, C]
+            if isinstance(feats, dict):
+                feats = feats.get("x", feats.get("last_hidden_state", None))
+                if feats is None:
+                    raise ValueError("Unsupported feature dict structure returned by timm DINO model.")
+            if feats.dim() == 3:
+                cls = feats[:, 0]          # CLS token
+            elif feats.dim() == 2:
+                cls = feats                # already pooled
+            else:
+                raise ValueError(f"Unexpected DINO feature shape: {feats.shape}")
+            return self.fc(cls)            # [B, output_dim]
+
+        # CNN/ResNet paths
         feats = self.encoder(x)            # [B, C, 1, 1]
         return self.fc(feats)              # [B, output_dim]
 

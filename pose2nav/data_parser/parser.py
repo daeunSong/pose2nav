@@ -30,7 +30,9 @@ def append_pickle(file_path, new_data):
     with open(file_path, "wb") as f:
         pickle.dump(data, f)
         
-def create_samples(input_path, obs_window: int = 6, pred_window: int = 8, linear_threshold: int = 0.03, num_ped: int = 6, num_joints: int = 17) -> dict:
+def create_samples(input_path, obs_window: int = 6, pred_window: int = 8,
+                   linear_threshold: int = 0.03, num_ped: int = 6,
+                   num_joints: int = 17) -> dict:
     """Create multiple samples from the parsed data folder
 
     input_path (PosixPath): directory of the parsed trajectory
@@ -40,14 +42,14 @@ def create_samples(input_path, obs_window: int = 6, pred_window: int = 8, linear
     print(f"input_path: {input_path}")
     with input_path.open("rb") as f:
         traj_data = pickle.load(f)
-    
+
     # Load keypoints
     keypoints_path = input_path.parent / "keypoints" / "keypoints_data.pkl"
     with keypoints_path.open("rb") as f:
         keypoints_data = pickle.load(f)["keypoints"]
 
     all_frames = sorted(
-        list([x for x in (input_path.parent / "rgb").iterdir()]), 
+        list([x for x in (input_path.parent / "rgb").iterdir()]),
         key=lambda x: int(x.name.split(".")[0])
     )
     traj_len = len(traj_data["position"])
@@ -60,22 +62,27 @@ def create_samples(input_path, obs_window: int = 6, pred_window: int = 8, linear
     past_frames, goal_frames = [], []   # [T, 1]
     non_linears = []
 
-    # Lists to store ketpoints
+    # NEW: store only one path per sample (the last observed frame)
+    last_past_frame_path = []
+
+    # Lists to store keypoints
     past_kp_3d, future_kp_3d = [], []   # [T, N, 17, 3]
-    past_kp_2d, future_kp_2d = [], []   # [T, N, 17, 2]    
+    past_kp_2d, future_kp_2d = [], []   # [T, N, 17, 2]
     past_root_3d, future_root_3d = [], []   # [T, N, 3]
-    has_humans = []                    
+    has_humans = []
 
     non_linear_counter = 0
     has_human_counter = 0
-    
+
     for i in range(traj_len - seq_len):
 
         # Reset tracking
+        from collections import defaultdict
         track_3d = defaultdict(lambda: [None] * seq_len)
         track_2d = defaultdict(lambda: [None] * seq_len)
         track_root = defaultdict(lambda: [None] * seq_len)
         has_human = False
+
         # Loop through all frames in the current window
         for t in range(seq_len):  # local frame index within window
             j = i + t
@@ -87,23 +94,25 @@ def create_samples(input_path, obs_window: int = 6, pred_window: int = 8, linear
                 if "keypoints_3d" in human:
                     k3d = np.stack(human["keypoints_3d"], axis=0)  # (17, 3)
                     k2d = np.array(human["keypoints_2d"], dtype=np.float32)  # (17, 2)
-                    root = np.array(human["root_3d"], dtype=np.float32)  # (3,)
+                    root = np.array(human["root_3d"], dtype=np.float32)      # (3,)
                     track_3d[label_id][t] = k3d
                     track_2d[label_id][t] = k2d
                     track_root[label_id][t] = root
                     if t < obs_window:
                         has_human = True
-            
-        sorted_ids = sorted(track_3d.items(), key=lambda item: sum(x is not None for x in item[1][:obs_window]), reverse=True)
+
+        sorted_ids = sorted(track_3d.items(),
+                            key=lambda item: sum(x is not None for x in item[1][:obs_window]),
+                            reverse=True)
         selected_ids = [k for k, _ in sorted_ids[:num_ped]]
 
         # Initialize output tensors
         keypoints_3d = np.zeros((seq_len, num_ped, num_joints, 3), dtype=np.float32)
         keypoints_2d = np.zeros((seq_len, num_ped, num_joints, 2), dtype=np.float32)
-        root_3d = np.zeros((seq_len, num_ped, 3), dtype=np.float32)
+        root_3d      = np.zeros((seq_len, num_ped, 3), dtype=np.float32)
 
-        for n, label_id in enumerate(selected_ids): # n = 0..num_ped-1
-            for t in range(seq_len):    # t = 0..T-1
+        for n, label_id in enumerate(selected_ids):  # n = 0..num_ped-1
+            for t in range(seq_len):                 # t = 0..T-1
                 if track_3d[label_id][t] is not None:
                     keypoints_3d[t, n] = track_3d[label_id][t]
                 if track_2d[label_id][t] is not None:
@@ -121,9 +130,17 @@ def create_samples(input_path, obs_window: int = 6, pred_window: int = 8, linear
         vws.append(traj_data["vw"][i : i + obs_window])
         goal_vws.append(traj_data["vw"][i + obs_window : i + seq_len])
         # store image addresses
-        past_frames.append(all_frames[i : i + obs_window])
-        goal_frames.append(all_frames[i + obs_window : i + seq_len])
-        is_nonlinear = poly_fit(np.array(traj_data["position"])[i + obs_window : i + seq_len], pred_window, linear_threshold)
+        pf = all_frames[i : i + obs_window]
+        gf = all_frames[i + obs_window : i + seq_len]
+        past_frames.append(pf)
+        goal_frames.append(gf)
+
+        # NEW: store ONLY the last observed frame path as string
+        last_p = pf[-1] if len(pf) > 0 else None
+        last_past_frame_path.append(str(last_p) if last_p is not None else None)
+
+        is_nonlinear = poly_fit(np.array(traj_data["position"])[i + obs_window : i + seq_len],
+                                pred_window, linear_threshold)
         non_linears.append(is_nonlinear)
         non_linear_counter += is_nonlinear
         has_human_counter += int(has_human)
@@ -135,10 +152,6 @@ def create_samples(input_path, obs_window: int = 6, pred_window: int = 8, linear
         past_root_3d.append(root_3d[:obs_window])
         future_root_3d.append(root_3d[obs_window:])
         has_humans.append(int(has_human))
-        
-
-        # print(f"frames = {all_frames[i : i + obs_window]}")
-        # frames = [PosixPath('data/processed/WW_FairOaks_9_neutral_0/rgb/436.jpg'), PosixPath('data/processed/WW_FairOaks_9_neutral_0/rgb/437.jpg'), PosixPath('data/processed/WW_FairOaks_9_neutral_0/rgb/438.jpg'), PosixPath('data/processed/WW_FairOaks_9_neutral_0/rgb/439.jpg'), PosixPath('data/processed/WW_FairOaks_9_neutral_0/rgb/440.jpg'), PosixPath('data/processed/WW_FairOaks_9_neutral_0/rgb/441.jpg')]
 
     post_processed = {
         "past_positions": positions,
@@ -147,7 +160,7 @@ def create_samples(input_path, obs_window: int = 6, pred_window: int = 8, linear
         "future_yaw": goal_yaws,
         "past_vw": vws,
         "future_vw": goal_vws,
-        "past_frames": past_frames,
+        "past_frames": past_frames,        # existing (list of paths per sample)
         "future_frames": goal_frames,
         "non_linear": non_linears,
         "past_kp_3d": past_kp_3d,
@@ -157,8 +170,10 @@ def create_samples(input_path, obs_window: int = 6, pred_window: int = 8, linear
         "past_root_3d": past_root_3d,
         "future_root_3d": future_root_3d,
         "has_humans": has_humans,
+
+        # NEW: single path per sample for visualization
+        "last_past_frame_path": last_past_frame_path,
     }
-    # print(f"{non_linear_counter = }")
     print(f"has_human_counter = {has_human_counter}/{len(has_humans)}")
     return post_processed
 

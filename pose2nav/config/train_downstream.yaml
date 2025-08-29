@@ -1,13 +1,14 @@
 dataset:
   index_file: "data/processed/samples/samples_train_index.json"
   only_human_visable: true
-  resize: [192, 192]
+  only_nonlinear: true
+  resize: [224, 224] #[192, 192]
   metric_waypoint_spacing: 1.0
 
 train_params:
   seed: 42
   batch_size: 16
-  epochs: 30           # total downstream epochs (Stage-1 + Stage-2)
+  epochs: 50           # total downstream epochs (Stage-1 + Stage-2)
   stage1_epochs: 5     # Stage-1: freeze backbone, train head only
   head_lr: 5e-4        # LR for the MLP head (both stages)
   backbone_lr: 1e-4    # LR for backbone during Stage-2
@@ -16,7 +17,7 @@ train_params:
   save_every: 2
   amp: false
   clip_grad_norm: 1.0
-  sample_ratio: 0.1     # set <1.0 to subsample the dataset for quick runs
+  sample_ratio: 1.0     # set <1.0 to subsample the dataset for quick runs
   sample_seed: 42
   log_every: 50
 
@@ -25,6 +26,7 @@ model:
   d: 256
   d_goal: 64
   head_hidden_mult: 2
+  num_layers: 3
 
   input:
     T_obs: 6
@@ -33,7 +35,7 @@ model:
     N_joints: 17
 
   image_encoder:
-    name: resnet18
+    name: dino #resnet18
     pretrained: true
     freeze_bn: true
     freeze_stem: false
@@ -41,7 +43,7 @@ model:
 
 directory:
   model_dir: /home/songd/research/pose2nav/checkpoint/downstream/   
-  pretext_ckpt: /home/songd/research/pose2nav/checkpoint/pretext/socialnav_pretext_vicreg_d256_20250820_211534.pth
+  pretext_ckpt: /home/songd/research/pose2nav/checkpoint/pretext/socialnav_pretext_vicreg_d256_20250829_061157_best-best.pth
 
 logger:
   project: socialnav_downstream

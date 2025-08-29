@@ -1,7 +1,8 @@
 dataset:
   index_file: "data/processed/samples/samples_train_index.json"
   only_human_visable: true
-  resize: [192, 192]
+  only_nonlinear: true
+  resize: [224, 224] #[192, 192]
   metric_waypoint_spacing: 1.0
 
 train_params:
@@ -13,7 +14,7 @@ train_params:
   num_workers: 4
   save_every: 2
   loss: vicreg
-  sample_ratio: 0.1
+  sample_ratio: 1.0
   sample_seed: 42
   amp: false
   clip_grad_norm: 1.0
@@ -27,7 +28,7 @@ model:
     N_human: 3
     N_joints: 17
   image_encoder:
-    name: resnet18
+    name: dino #resnet18
     pretrained: true
   obs_transformer:
     layers: 3

@@ -1,7 +1,8 @@
 dataset:
   index_file: "data/processed/samples/samples_val_index.json"
   only_human_visable: true
-  resize: [192, 192]
+  only_nonlinear: true
+  resize: [224, 224] #[192, 192]
   metric_waypoint_spacing: 1.0
 
 eval_params:
@@ -23,5 +24,5 @@ model:
     channels_last: true
 
 directory:
-  downstream_ckpt: checkpoint/downstream/socialnav_downstream_e30_20250821_best_s2.pth
-  out_path: /home/songd/research/pose2nav/pose2nav/validation/val_results_20250823.pkl
+  downstream_ckpt: checkpoint/downstream/socialnav_downstream_e50_20250828_best_headonly.pth
+  out_path: /home/songd/research/pose2nav/pose2nav/validation/val_results_20250828.pkl

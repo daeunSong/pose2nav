@@ -60,6 +60,7 @@ mim install "mmpose==1.3.2"
 ``` -->
 
 <!--
+
 conda create -n parser python=3.9 -y
 conda install pytorch torchvision=0.13.0 torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
 pip install openmim

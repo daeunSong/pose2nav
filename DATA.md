@@ -75,12 +75,12 @@ We only store the front facing camera for the Spot in SCAND, so both MuSoHu and 
 
 ### Keypoints Data
 
-```
+```bash
 {
   "labels": {
     "0.jpg": [
       {
-        "label_id": "pedestrian:0",
+        "label_id": "0",
         "keypoints_3d": [[x, y, z], ..., [x, y, z]],
         "root_3d": [x, y, z],
         "keypoints_2d": [[x, y], ..., [x, y]]
@@ -92,7 +92,7 @@ We only store the front facing camera for the Spot in SCAND, so both MuSoHu and 
 }
 ```
 
-`-kp` for parsing the keypoints
+`-kp` for parsing the keypoints, run only after parsing data
 
 
 ```bash
@@ -100,3 +100,50 @@ python pose2nav/data_parser/parser.py --conf pose2nav/config/parser -kp
 ```
 
 ## Creating Samples
+
+```bash
+ sample = {
+	"past_positions":      torch.Size([T_obs, 2]), dtype=torch.float32
+	"future_positions":    torch.Size([T_pred, 2]), dtype=torch.float32
+	"past_yaw":            torch.Size([T_obs]),    dtype=torch.float32
+	"future_yaw":          torch.Size([T_pred]),   dtype=torch.float32
+	
+	"past_vw":             torch.Size([T_obs, 2]), dtype=torch.float32   # (v, w)
+	"future_vw":           torch.Size([T_pred, 2]),dtype=torch.float32
+	
+	"past_frames":         torch.Size([T_obs, 3, H, W]), dtype=torch.float32, range [0,1]
+	                       # list of transformed tensors
+	
+	"original_frame":      torch.Size([H, W, 3]), dtype=torch.float32, range [0,1]
+	                       # numpy array, last past frame in original format
+	
+	"future_frame":        torch.Size([3, H, W]), dtype=torch.float32, range [0,1]
+	                       # transformed tensor of target frame
+	
+	"past_kp_3d":          torch.Size([T_obs, N_h, 17, 3]), dtype=torch.float32
+	                       # (x, y, z) per keypoint
+	
+	"future_kp_3d":        torch.Size([T_pred, N_h, 17, 3]), dtype=torch.float32
+	
+	"past_kp_2d":          torch.Size([T_obs, N_h, 17, 2]), dtype=torch.float32
+	                       # (x, y) pixel coordinates
+	
+	"future_kp_2d":        torch.Size([T_pred, N_h, 17, 2]), dtype=torch.float32
+	
+	"past_root_3d":        torch.Size([T_obs, N_h, 3]), dtype=torch.float32
+	                       # root joint position in 3D
+	
+	"future_root_3d":      torch.Size([T_pred, 3]), dtype=torch.float32
+	
+	"goal_direction":      torch.Size([2]), dtype=torch.float32
+	                       # normalized polar coordinates
+	
+	"dt":                  torch.Size([1]), dtype=torch.float32
+}
+```
+
+```bash
+python pose2nav/data_parser/parser.py --conf pose2nav/config/parser -cs
+```
+
+Run only after parsing dadta (including keypoints)

@@ -91,29 +91,29 @@ class SocialNavDataset(Dataset):
             del shard_data
 
         # Define transformations
-        if self.train:
-            self.transform = transforms.Compose([
-                transforms.RandomResizedCrop(224, interpolation=transforms.InterpolationMode.BICUBIC),
-                transforms.Resize(self.resize, antialias=True),
-                # transforms.RandomHorizontalFlip(p=0.5),
-                transforms.RandomAutocontrast(p=0.4),
-                transforms.RandomApply([
-                    transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)
-                ], p=0.8),
-                transforms.RandomGrayscale(p=0.2),
-                GaussianBlur(p=0.6),
-                Solarization(p=0.5),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225]),
-            ])
-        else:
-            self.transform = transforms.Compose([
-                transforms.Resize(self.resize, antialias=True),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225]),
-            ])
+        # if self.train:
+        #     self.transform = transforms.Compose([
+        #         transforms.RandomResizedCrop(224, interpolation=transforms.InterpolationMode.BICUBIC),
+        #         transforms.Resize(self.resize, antialias=True),
+        #         # transforms.RandomHorizontalFlip(p=0.5),
+        #         transforms.RandomAutocontrast(p=0.4),
+        #         transforms.RandomApply([
+        #             transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)
+        #         ], p=0.8),
+        #         transforms.RandomGrayscale(p=0.2),
+        #         GaussianBlur(p=0.6),
+        #         Solarization(p=0.5),
+        #         transforms.ToTensor(),
+        #         transforms.Normalize(mean=[0.485, 0.456, 0.406],
+        #                              std=[0.229, 0.224, 0.225]),
+        #     ])
+        # else:
+        self.transform = transforms.Compose([
+            transforms.Resize(self.resize, antialias=True),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                    std=[0.229, 0.224, 0.225]),
+        ])
 
     def __len__(self):
         return len(self.samples)

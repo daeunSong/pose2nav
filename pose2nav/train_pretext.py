@@ -1,8 +1,11 @@
+# train_pretext.py
 import argparse
 import os
 import math
 import random
 from datetime import datetime
+import time
+from copy import deepcopy
 
 import numpy as np
 import torch
@@ -23,6 +26,8 @@ class Learner:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.use_wandb = use_wandb
 
+        self.global_step = 0
+
         self.set_seed(self.cfg.train_params.seed)
         self.init_data()
         self.init_model()
@@ -30,8 +35,28 @@ class Learner:
         self.init_optimizer()
         self.init_logger()  # W&B init
 
-        amp_enabled = bool(self.cfg.train_params.get("amp", True))
-        self.scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
+    def _build_pretext_checkpoint(self, epoch:int, iteration:int, best:float, last_loss:float):
+        model = self.model.module if isinstance(self.model, torch.nn.DataParallel) else self.model
+        ckpt = {
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "epoch": epoch,
+            "iteration": iteration,
+            "best": float(best),
+            "last_loss": float(last_loss),
+            "model_name": type(model).__name__,
+            "optimizer_name": type(self.optimizer).__name__,
+            "optimizer": self.optimizer.state_dict(),
+            "model": model.state_dict(),  # e2e
+            # per-part (mirror VANP idea with your module names)
+            "image_encoder":        model.image_encoder.state_dict(),
+            "kp_encoder":           model.kp_encoder.state_dict(),
+            "observation_encoder":  model.observation_encoder.state_dict(),
+            "proj_obs":             model.proj_obs.state_dict(),
+            "proj_future":          model.proj_future.state_dict(),
+            "final_ln":             model.final_ln.state_dict(),
+            "future_traj_encoder":  model.future_traj_encoder.state_dict(),
+        }
+        return ckpt
 
     # -------------------- setup --------------------
     def set_seed(self, seed):
@@ -45,12 +70,12 @@ class Learner:
         dataset = SocialNavDataset(
             index_file=getattr(self.cfg.dataset, "index_file", self.cfg.dataset.get("root", "")),
             train=True,
-            only_human_visable=getattr(self.cfg.dataset, "only_human_visable", False),
+            only_human_visable=getattr(self.cfg.dataset, "only_human_visable", True),
+            only_nonlinear=getattr(self.cfg.dataset, "only_nonlinear", True),
             resize=tuple(self.cfg.dataset.get("resize", [224, 224])),
             metric_waypoint_spacing=self.cfg.dataset.get("metric_waypoint_spacing", 1.0),
         )
 
-        # Optional: train on a subset (e.g., 10%)
         ratio = float(self.cfg.train_params.get("sample_ratio", 1.0))
         if ratio < 1.0:
             total = len(dataset)
@@ -81,7 +106,6 @@ class Learner:
         if lp and self.cfg.train_params.loss.lower() in lp:
             self.loss_kwargs = dict(lp[self.cfg.train_params.loss.lower()])
 
-
     def init_optimizer(self):
         lr = self.cfg.train_params.get("lr", 5e-4)
         wd = self.cfg.train_params.get("weight_decay", 0.03)
@@ -90,7 +114,7 @@ class Learner:
 
     def _check_opt_params(self):
         opt_params = {id(p) for g in self.optimizer.param_groups for p in g['params']}
-        missing = [n for n,p in self.model.named_parameters() if p.requires_grad and id(p) not in opt_params]
+        missing = [n for n, p in self.model.named_parameters() if p.requires_grad and id(p) not in opt_params]
         if missing:
             print("[WARN] Params missing from optimizer:", missing)
 
@@ -138,60 +162,44 @@ class Learner:
     def train_one_epoch(self, epoch_idx=0):
         self.model.train()
         total_loss, num_batches = 0.0, 0
-        guard = NaNGuard(self.model)
 
         pbar = tqdm(self.train_loader, desc=f"Train E{epoch_idx+1}", leave=False)
         for step, batch in enumerate(pbar, start=1):
             batch = self.move_batch_to_device(batch)
 
-            # Basic batch sanity once every N steps
-            if step == 1:
-                for k,v in batch.items():
-                    if torch.is_tensor(v):
-                        tensor_stats(f"batch.{k}", v)
+            out = self.model(batch)
+            z_obs  = out["z_obs"]
+            z_traj = out["z_traj"]
 
-            with torch.cuda.amp.autocast(enabled=self.scaler.is_enabled()):
-                out = self.model(batch)
-                z_obs  = out["z_obs"]
-                z_traj = out["z_traj"]
+            loss = self.base_loss_fn(z_obs, z_traj, **self.loss_kwargs)
 
-                # Sanity stats
-                tensor_stats("z_obs", z_obs)
-                tensor_stats("z_traj", z_traj)
-
-                # Single loss (VICReg / Barlow) between obs and traj
-                loss = self.base_loss_fn(z_obs, z_traj, **self.loss_kwargs)
-                
-                if not torch.isfinite(loss):
-                    print("[BAD] total loss NaN.", "debug dims:", z_obs.shape, z_traj.shape)
-                    raise FloatingPointError("loss NaN")
+            if not torch.isfinite(loss):
+                print("[BAD] total loss NaN.", "debug dims:", z_obs.shape, z_traj.shape)
+                raise FloatingPointError("loss NaN")
 
             self.optimizer.zero_grad(set_to_none=True)
-            self.scaler.scale(loss).backward()
+            loss.backward()
 
-            # Gradient diagnostics
-            self.scaler.unscale_(self.optimizer)
+            # gradient diagnostics AFTER backward
             bad_grad = False
             total_norm_sq = 0.0
-            for n,p in self.model.named_parameters():
+            for n, p in self.model.named_parameters():
                 if p.grad is None:
                     continue
                 g = p.grad
                 if not torch.isfinite(g).all():
-                    print(f"[BAD] grad NaN/Inf at {n}")
-                    bad_grad = True
+                    print(f"[BAD] grad NaN/Inf at {n}"); bad_grad = True
                 total_norm_sq += g.norm().item() ** 2
             if bad_grad:
-                raise FloatingPointError("gradient NaN")
+                raise FloatingPointError("gradient NaN/Inf")
             total_norm = total_norm_sq ** 0.5
 
-            # Clip after checking
+            # clip AFTER backward, BEFORE step
             clip = self.cfg.train_params.get("clip_grad_norm", 1.0)
             if clip and clip > 0:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), clip)
 
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            self.optimizer.step()
 
             total_loss += float(loss.item()); num_batches += 1
             avg = total_loss / num_batches
@@ -205,16 +213,16 @@ class Learner:
                     "train/z_traj_norm": float(z_traj.norm(p=2, dim=1).mean().item()),
                     "train/lr": self.optimizer.param_groups[0]["lr"],
                     "train/epoch": epoch_idx + 1,
-                    "train/step": step,
-                })
+                }, step=self.global_step)
 
-        guard.close()
+            self.global_step += 1
+
         return total_loss / max(1, num_batches)
 
     def train(self):
         print(f"Using device: {self.device}")
-        epochs = int(self.cfg.train_params.epochs)
-        save_every = int(self.cfg.train_params.get("save_every", 5))
+        epochs = int(self.cfg.train_params.get("epochs", 20))
+        save_every   = int(self.cfg.train_params.get("save_every", 5))
         best_loss = float("inf")
 
         # Resolve save dir from config (fallbacks)
@@ -237,20 +245,27 @@ class Learner:
                 best_loss = avg_loss
 
             if is_best or ((epoch + 1) % save_every == 0):
-                timestamp = datetime.now().strftime("%Y%m%d")
                 tag = "best" if is_best else f"e{epoch+1}"
-                ckpt = os.path.join(model_dir, f"{self.cfg.logger.experiment_name}_{timestamp}_{tag}.pth")
-                save_checkpoint(self.model, self.optimizer, epoch + 1, ckpt)
-                print(f"[Checkpoint] Saved to {ckpt}")
+                name = f"{self.cfg.logger.experiment_name}"
 
-                if self.use_wandb and os.path.isfile(ckpt):
+                state = self._build_pretext_checkpoint(
+                    epoch=epoch+1,
+                    iteration=self.global_step,
+                    best=best_loss,
+                    last_loss=avg_loss,
+                )
+                ckpt_path = save_checkpoint(state, is_best, model_dir, name)   # writes {name}.pth (+ -best.pth if best)
+                print(f"[Checkpoint] Saved to {ckpt_path}")
+
+                if self.use_wandb and os.path.isfile(ckpt_path):
                     artifact = wandb.Artifact(
                         name=f"{self.cfg.logger.experiment_name}_{tag}",
                         type="model",
-                        metadata={"epoch": epoch + 1, "loss": float(avg_loss)},
+                        metadata={"epoch": epoch + 1, "loss": float(avg_loss), "best": float(best_loss), "saved_at": ts},
                     )
-                    artifact.add_file(ckpt)
+                    artifact.add_file(ckpt_path)
                     wandb.log_artifact(artifact)
+
 
         if self.run is not None:
             self.run.finish()
@@ -266,4 +281,5 @@ if __name__ == "__main__":
     learner = Learner(args.cfg, use_wandb=not args.no_wandb)
     learner.train()
 
+# Usage:
 # python pose2nav/train_pretext.py --cfg pose2nav/config/train_pretext.yaml

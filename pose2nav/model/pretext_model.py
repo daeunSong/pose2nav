@@ -7,34 +7,29 @@ from model.encoders import (
     ImageEncoder,
     TrajectoryEncoder,
     KeypointEncoder2D,
-    RootPointEncoder2D,
+    # RootPointEncoder2D,   # REMOVED
 )
-
 
 class PretextModel(nn.Module):
     """
-    Two-stream observation with per-frame humans pooling (linear-softmax) → 2T tokens.
-    - No CLS, learned time embeddings only.
-    - No goal branch.
-    - Projection heads for both obs and future.
+    Observation tokens: per-frame IMAGE + per-frame pooled-HUMANS (from 2D keypoints only).
+    Adds a learnable CLS token (VANP-style) and uses its output as the observation summary.
 
     Inputs (batch):
       past_frames : [B, T, 3, H, W] or list[T] of [B, 3, H, W]
       past_kp_2d  : [B, T, N, 17, 2]
-      past_root_2d: [B, T, N, 2]
-      future_pos  : [B, T_pred, 2]
+      future_pos  : [B, T_pred, 2]   (optional; if provided and use_future=True)
 
     Outputs:
-      z_obs   : [B, d]
-      z_traj  : [B, d]
-      plus useful intermediates
+      z_obs   : [B, d]    (from CLS)
+      z_traj  : [B, d]    (projected future trajectory embedding, if computed)
+      + intermediates
     """
-
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.T_obs = cfg.model.input.T_obs
-        self.T_pred = cfg.model.input.T_pred
+        self.T_obs   = cfg.model.input.T_obs
+        self.T_pred  = cfg.model.input.T_pred
         self.N_human = cfg.model.input.N_human
         self.N_joints = 17
 
@@ -51,36 +46,31 @@ class PretextModel(nn.Module):
         self.kp_encoder = KeypointEncoder2D(
             seq_len=self.T_obs, num_humans=self.N_human, num_joints=self.N_joints, coord_dim=2, output_dim=d
         )
-        self.root2d_encoder = RootPointEncoder2D(
-            seq_len=self.T_obs, num_humans=self.N_human, input_dim=2, output_dim=d
-        )
+        # self.root2d_encoder = RootPointEncoder2D(
+        #     seq_len=self.T_obs, num_humans=self.N_human, input_dim=2, output_dim=d
+        # )
         self.future_traj_encoder = TrajectoryEncoder(output_dim=d)
 
-        # === Per-human fusion: (pose, root) -> human vector ===
-        self.human_fuse = nn.Sequential(
-            nn.LayerNorm(2 * d),
-            nn.Linear(2 * d, 2 * d),
-            nn.GELU(),
-            nn.Linear(2 * d, d),
-        )
-
-        # === Linear-softmax pooling across humans per frame ===
-        # score vector w ∈ R^d and temperature (optional)
-        self.human_pool_w = nn.Parameter(torch.randn(d))
+        # === Per-human pooling across humans per frame (linear-softmax on keypoint embeddings only) ===
+        self.human_pool_w   = nn.Parameter(torch.randn(d))
         self.human_pool_temp = getattr(cfg.model, "human_pool_temp", 1.0)
 
-        # === Time positional embeddings (learned) ===
-        # We reuse each time embedding twice per frame (img, humans)
-        self.time_pos = nn.Parameter(torch.randn(1, self.T_obs, d))
-        nn.init.trunc_normal_(self.time_pos, std=0.02)
+        # === Positional & CLS tokens (unique slot-wise, VANP-style) ===
+        self.cls_token = nn.Parameter(torch.randn(1, 1, d))
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+
+        # One learned table for the full sequence: [CLS] + 2 tokens per timestep
+        self.max_len = 1 + 2 * self.T_obs
+        self.pos_table = nn.Parameter(torch.randn(1, self.max_len, d))
+        nn.init.trunc_normal_(self.pos_table, std=0.02)
 
         # === Observation Transformer (temporal) ===
         enc_layer = nn.TransformerEncoderLayer(
             d_model=d,
-            nhead=8,
-            dim_feedforward=4 * d,
-            dropout=0.1,
-            activation="gelu",
+            nhead=4,
+            dim_feedforward=2 * d,
+            dropout=0.2,
+            activation="relu",
             batch_first=True,
             norm_first=True,  # Pre-LN
         )
@@ -93,18 +83,16 @@ class PretextModel(nn.Module):
             return nn.Sequential(
                 nn.LayerNorm(d_in),
                 nn.Linear(d_in, 2 * d_in),
-                nn.GELU(),
+                nn.LeakyReLU(negative_slope=0.2),
                 nn.Linear(2 * d_in, d_out),
             )
-
-        self.proj_obs = projector(d)
+        self.proj_obs    = projector(d)
         self.proj_future = projector(d)
 
-    def forward(self, batch: Dict[str, Any], use_future: bool=True) -> Dict[str, torch.Tensor]:
+    def forward(self, batch: Dict[str, Any], use_future: bool = True) -> Dict[str, torch.Tensor]:
         # ---- Unpack
         past_frames = batch["past_frames"]
-        kp_2d = batch["past_kp_2d"].float()                   # [B, T, N, 17, 2]
-        root_2d = batch["past_root_3d"][..., :2].float()      # [B, T, N, 2]
+        kp_2d       = batch["past_kp_2d"].float()          # [B, T, N, 17, 2]
 
         future_positions = batch.get("future_positions", None)
         z_traj = None
@@ -118,9 +106,7 @@ class PretextModel(nn.Module):
             past_frames = torch.stack(past_frames, dim=1)  # [B, T, 3, H, W]
         B, T, C, H, W = past_frames.shape
         assert T == self.T_obs, f"Expected T_obs={self.T_obs}, got {T}"
-
         d = self.d
-        N = self.N_human
 
         # =========================
         # 1) Per-modality encoders
@@ -130,47 +116,39 @@ class PretextModel(nn.Module):
         img_feats = self.image_encoder(frames_flat)      # [B*T, d]
         X_img = img_feats.view(B, T, d)                  # [B, T, d]
 
-        # Keypoints / Root → [B,T,N,d]
+        # Keypoints → [B,T,N,d]
         X_pose_tn = self.kp_encoder(kp_2d)               # [B, T, N, d]
-        X_root_tn = self.root2d_encoder(root_2d)         # [B, T, N, d]
 
         # =========================
-        # 2) Per-human fusion: (pose, root) -> one human vector per (t,n)
-        # =========================
-        Z_h = torch.cat([X_pose_tn, X_root_tn], dim=-1)  # [B, T, N, 2d]
-        H_tn = self.human_fuse(Z_h)                      # [B, T, N, d]
-        # cheap residual to retain modality detail
-        H_tn = H_tn + 0.5 * (X_pose_tn + X_root_tn)
-
-        # =========================
-        # 3) Per-frame pooling across humans (linear-softmax)
+        # 2) Per-frame pooling across humans (linear-softmax) on keypoint embeddings
         # =========================
         # scores: [B,T,N]
-        scores = (H_tn * self.human_pool_w).sum(dim=-1) / float(self.human_pool_temp)
-        alpha = scores.softmax(dim=2).unsqueeze(-1)      # [B,T,N,1]
-        X_hum = (alpha * H_tn).sum(dim=2)                # [B,T,d]
-        X_hum = F.layer_norm(X_hum, (d,))                # stabilize
+        scores = (X_pose_tn * self.human_pool_w).sum(dim=-1) / float(self.human_pool_temp)
+        alpha  = scores.softmax(dim=2).unsqueeze(-1)     # [B,T,N,1]
+        X_hum  = (alpha * X_pose_tn).sum(dim=2)          # [B,T,d]
+        X_hum  = F.layer_norm(X_hum, (d,))               # stabilize
 
         # =========================
-        # 4) Build 2T-token sequence with time embeddings (no type emb, no CLS)
+        # 3) Build tokens with CLS and time embeddings
         # =========================
-        S = torch.stack([X_img, X_hum], dim=2).reshape(B, 2 * T, d)  # [B,2T,d]
-        time_pos = self.time_pos[:, :T, :].repeat_interleave(2, dim=1)  # [1,2T,d]
-        S = S + time_pos
+        body_tokens = torch.stack([X_img, X_hum], dim=2).reshape(B, 2 * T, d)  # [B, 2T, d]
+        cls_tok     = self.cls_token.expand(B, 1, d)                           # [B, 1, d]
+
+        S = torch.cat([cls_tok, body_tokens], dim=1)                           # [B, 1+2T, d]
+
+        # Unique learned position per slot (slice to current length)
+        L = S.size(1)  # 1 + 2T
+        pos = self.pos_table[:, :L, :]                                         # [1, L, d]
+        S = S + pos
+
 
         # =========================
-        # 5) Observation transformer (temporal reasoning)
+        # 4) Observation transformer (temporal reasoning)
         # =========================
-        U = self.observation_encoder(S)   # [B,2T,d]
-        U = self.final_ln(U)              # final LN (Pre-LN style)
-        h_obs = U.mean(dim=1)             # or learned pooling
-        z_obs = self.proj_obs(h_obs)      # [B,d]
-
-        # =========================
-        # Trajectory branch
-        # =========================
-        # z_traj_raw = self.future_traj_encoder(future_positions)  # [B,d]
-        # z_traj = self.proj_future(z_traj_raw)                    # [B,d]
+        U = self.observation_encoder(S)   # [B,1+2T,d]
+        U = self.final_ln(U)
+        h_cls = U[:, 0, :]                # CLS
+        z_obs = self.proj_obs(h_cls)      # [B,d]
 
         return {
             "z_obs": z_obs,
@@ -178,10 +156,7 @@ class PretextModel(nn.Module):
             # Intermediates
             "X_img": X_img,                 # [B,T,d]
             "X_pose_tn": X_pose_tn,         # [B,T,N,d]
-            "X_root_tn": X_root_tn,         # [B,T,N,d]
-            "H_tn": H_tn,                   # [B,T,N,d]
             "hum_alpha": alpha.squeeze(-1), # [B,T,N]
             "X_hum": X_hum,                 # [B,T,d]
-            "S": S,                         # [B,2T,d]
-            "U": U,                         # [B,2T,d]
+            "tokens": S,                     # [B,1+2T,d] (with pos added)
         }
