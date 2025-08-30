@@ -17,12 +17,12 @@ model:
     N_human: 3
     N_joints: 17
   image_encoder:
-    name: resnet18
+    name: dino
     pretrained: true
     freeze_bn: true
     freeze_stem: false
     channels_last: true
 
 directory:
-  downstream_ckpt: checkpoint/downstream/socialnav_downstream_e50_20250828_best_headonly.pth
-  out_path: /home/songd/research/pose2nav/pose2nav/validation/val_results_20250828.pkl
+  downstream_ckpt: checkpoint/downstream/socialnav_downstream_e50_best.pth
+  out_path: /home/songd/research/pose2nav/pose2nav/validation/val_results_20250829.pkl

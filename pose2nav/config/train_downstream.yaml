@@ -22,24 +22,15 @@ train_params:
   log_every: 50
 
 model:
-  # Must match the d used in your pretext checkpoint
-  d: 256
+  d: 1024  # Must match the d_out in pretext
   d_goal: 64
-  head_hidden_mult: 2
-  num_layers: 3
+  d_hidden: 1024
 
   input:
     T_obs: 6
     T_pred: 6
     N_human: 3
     N_joints: 17
-
-  image_encoder:
-    name: dino #resnet18
-    pretrained: true
-    freeze_bn: true
-    freeze_stem: false
-    channels_last: true
 
 directory:
   model_dir: /home/songd/research/pose2nav/checkpoint/downstream/   

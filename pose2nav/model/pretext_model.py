@@ -28,13 +28,13 @@ class PretextModel(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.T_obs   = cfg.model.input.T_obs
-        self.T_pred  = cfg.model.input.T_pred
-        self.N_human = cfg.model.input.N_human
-        self.N_joints = 17
 
-        # model dims
-        self.d = getattr(cfg.model, "d", 256)
+        # --- core dims / inputs
+        self.d        = int(cfg.model.d)
+        self.T_obs    = int(cfg.model.input.T_obs)
+        self.T_pred   = int(cfg.model.input.T_pred)
+        self.N_human  = int(cfg.model.input.N_human)
+        self.N_joints = int(cfg.model.input.N_joints)
         d = self.d
 
         # === Encoders ===
@@ -43,51 +43,62 @@ class PretextModel(nn.Module):
             pretrained=cfg.model.image_encoder.pretrained,
             output_dim=d,
         )
-        self.kp_encoder = KeypointEncoder2D(
-            seq_len=self.T_obs, num_humans=self.N_human, num_joints=self.N_joints, coord_dim=2, output_dim=d
-        )
         # self.root2d_encoder = RootPointEncoder2D(
         #     seq_len=self.T_obs, num_humans=self.N_human, input_dim=2, output_dim=d
         # )
-        self.future_traj_encoder = TrajectoryEncoder(output_dim=d)
+        self.kp_encoder = KeypointEncoder2D(
+            seq_len=self.T_obs, num_humans=self.N_human, num_joints=self.N_joints,
+            coord_dim=2, output_dim=d
+        )
+        self.future_traj_encoder = TrajectoryEncoder(
+            output_dim=d,
+            hidden=int(cfg.model.future_traj_encoder.hidden),
+            num_layers=int(cfg.model.future_traj_encoder.num_layers),
+        )
 
         # === Per-human pooling across humans per frame (linear-softmax on keypoint embeddings only) ===
         self.human_pool_w   = nn.Parameter(torch.randn(d))
         self.human_pool_temp = getattr(cfg.model, "human_pool_temp", 1.0)
 
-        # === Positional & CLS tokens (unique slot-wise, VANP-style) ===
+        # --- CLS + learned positional table
         self.cls_token = nn.Parameter(torch.randn(1, 1, d))
         nn.init.trunc_normal_(self.cls_token, std=0.02)
 
-        # One learned table for the full sequence: [CLS] + 2 tokens per timestep
-        self.max_len = 1 + 2 * self.T_obs
+        self.max_len   = 1 + 2 * self.T_obs
         self.pos_table = nn.Parameter(torch.randn(1, self.max_len, d))
         nn.init.trunc_normal_(self.pos_table, std=0.02)
 
         # === Observation Transformer (temporal) ===
+        otc = cfg.model.obs_transformer
         enc_layer = nn.TransformerEncoderLayer(
             d_model=d,
-            nhead=4,
-            dim_feedforward=2 * d,
-            dropout=0.2,
+            nhead=int(otc.heads),
+            dim_feedforward=int(otc.ff_mult) * d,
+            dropout=float(otc.dropout),
             activation="relu",
             batch_first=True,
-            norm_first=True,  # Pre-LN
+            norm_first=(str(otc.norm).lower() == "preln"),
         )
-        self.observation_encoder = nn.TransformerEncoder(enc_layer, num_layers=3)
+        self.observation_encoder = nn.TransformerEncoder(enc_layer, num_layers=int(otc.layers))
         self.final_ln = nn.LayerNorm(d)
 
         # === Projection heads ===
-        def projector(d_in: int, d_out: Optional[int] = None) -> nn.Sequential:
-            d_out = d_out or d_in
+        pc = cfg.model.projector
+        prj_d_out = int(pc.d_out)
+        prj_hidden_w = int(pc.hidden)
+
+        def projector(d_in: int, d_hidden=2048, d_out=128) -> nn.Sequential:
             return nn.Sequential(
-                nn.LayerNorm(d_in),
-                nn.Linear(d_in, 2 * d_in),
-                nn.LeakyReLU(negative_slope=0.2),
-                nn.Linear(2 * d_in, d_out),
+                nn.Linear(d_in, d_hidden, bias=False),
+                nn.BatchNorm1d(d_hidden, eps=1e-5, affine=True),
+                nn.ReLU(inplace=True),
+                nn.Linear(d_hidden, d_hidden, bias=False),
+                nn.BatchNorm1d(d_hidden, eps=1e-5, affine=True),
+                nn.ReLU(inplace=True),
+                nn.Linear(d_hidden, d_out, bias=False),
             )
-        self.proj_obs    = projector(d)
-        self.proj_future = projector(d)
+        self.proj_obs    = projector(d, prj_hidden_w, prj_d_out)
+        self.proj_future = projector(d, prj_hidden_w, prj_d_out)
 
     def forward(self, batch: Dict[str, Any], use_future: bool = True) -> Dict[str, torch.Tensor]:
         # ---- Unpack
@@ -129,18 +140,12 @@ class PretextModel(nn.Module):
         X_hum  = F.layer_norm(X_hum, (d,))               # stabilize
 
         # =========================
-        # 3) Build tokens with CLS and time embeddings
+        # 3) Tokens + learned positional embeddings
         # =========================
-        body_tokens = torch.stack([X_img, X_hum], dim=2).reshape(B, 2 * T, d)  # [B, 2T, d]
-        cls_tok     = self.cls_token.expand(B, 1, d)                           # [B, 1, d]
-
-        S = torch.cat([cls_tok, body_tokens], dim=1)                           # [B, 1+2T, d]
-
-        # Unique learned position per slot (slice to current length)
-        L = S.size(1)  # 1 + 2T
-        pos = self.pos_table[:, :L, :]                                         # [1, L, d]
-        S = S + pos
-
+        body_tokens = torch.stack([X_img, X_hum], dim=2).reshape(B, 2 * T, d)         # [B,2T,d]
+        cls_tok     = self.cls_token.expand(B, 1, d)                                   # [B,1,d]
+        S = torch.cat([cls_tok, body_tokens], dim=1)                                   # [B,1+2T,d]
+        S = S + self.pos_table[:, : S.size(1), :]                                      # add positions
 
         # =========================
         # 4) Observation transformer (temporal reasoning)

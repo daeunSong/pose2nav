@@ -20,29 +20,32 @@ train_params:
   clip_grad_norm: 1.0
 
 model:
-  d: 256
+  d: 512
   human_pool_temp: 1.0
   input:
     T_obs: 6
     T_pred: 6
     N_human: 3
     N_joints: 17
+
   image_encoder:
-    name: dino #resnet18
+    name: dino
     pretrained: true
+
   obs_transformer:
     layers: 3
     heads: 4
     ff_mult: 4
     dropout: 0.1
-    norm: preln
+    norm: preln        # or "postln"
+
   projector:
     use: true
-    d_out: 64
-    hidden: 2x
-    norm: layernorm
+    d_out: 1024          # output dim of z_obs / z_traj
+    hidden: 1024       
+
   future_traj_encoder:
-    hidden: 256
+    hidden: 1024
     num_layers: 1
 
 loss_params:
