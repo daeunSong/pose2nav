@@ -71,14 +71,26 @@ mim install "mmpose>=1.1.0"
 
 -->
 
-## Launch
+<!-- ## Launch
 1. Launch skeletal keypthon detection
-    ```
+    c
     conda activate pose2nav
     export PYTHONPATH=$(pwd)/pose2nav/skeleton/_monoloco:$PYTHONPATH
     export PYTHONPATH=$(pwd)/pose2nav/skeleton/_mmpose:$PYTHONPATH
     cd scripts/
     python test_pose_estimation.py
     ```
-2. Play the ROS bag
+2. Play the ROS bag -->
 
+```
+conda env create -f environment.yaml
+conda activate learner
+
+export PYTHONPATH=$(pwd)/pose2nav:$PYTHONPATH
+export PYTHONPATH=$(pwd)/pose2nav/skeleton/_monoloco:$PYTHONPATH
+export PYTHONPATH=$(pwd)/pose2nav/skeleton/_mmpose:$PYTHONPATH
+
+python pose2nav/train_pretext.py --cfg pose2nav/config/train.yaml
+python pose2nav/train_downstream.py --cfg pose2nav/config/train.yaml
+
+```
