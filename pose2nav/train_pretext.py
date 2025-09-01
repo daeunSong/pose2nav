@@ -283,4 +283,4 @@ if __name__ == "__main__":
     learner.train()
 
 # Usage:
-# python pose2nav/train_pretext.py --cfg pose2nav/config/train_pretext.yaml
+# python pose2nav/train_pretext.py --cfg pose2nav/config/train.yaml

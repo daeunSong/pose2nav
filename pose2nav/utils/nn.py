@@ -36,4 +36,4 @@ def load_checkpoint(save: str, device: str):
     """
     if not os.path.exists(save):
         raise f"File doesn't exist {save}"
-    return torch.load(save, map_location=device)
+    return torch.load(save, map_location="cpu")

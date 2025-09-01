@@ -9,17 +9,17 @@ train_params:
   seed: 42
   batch_size: 16
   epochs: 50           # total downstream epochs (Stage-1 + Stage-2)
-  stage1_epochs: 5     # Stage-1: freeze backbone, train head only
   head_lr: 5e-4        # LR for the MLP head (both stages)
   backbone_lr: 1e-4    # LR for backbone during Stage-2
   weight_decay: 1e-5
   num_workers: 4
   save_every: 2
-  amp: false
+  loss: vicreg
   clip_grad_norm: 1.0
   sample_ratio: 1.0     # set <1.0 to subsample the dataset for quick runs
   sample_seed: 42
   log_every: 50
+  clip_grad_norm: 1.0
 
 model:
   d: 1024  # Must match the d_out in pretext
@@ -32,9 +32,30 @@ model:
     N_human: 3
     N_joints: 17
 
+  image_encoder:
+    name: dino
+    pretrained: true
+
+  obs_transformer:
+    layers: 3
+    heads: 4
+    ff_mult: 4
+    dropout: 0.1
+    norm: preln        # or "postln"
+
+  projector:
+    use: true
+    d_out: 1024          # output dim of z_obs / z_traj
+    hidden: 1024       
+
+  # downstream
+  future_traj_encoder:
+    hidden: 1024
+    num_layers: 1
+    
 directory:
   model_dir: /home/songd/research/pose2nav/checkpoint/downstream/   
-  pretext_ckpt: /home/songd/research/pose2nav/checkpoint/pretext/socialnav_pretext_vicreg_d256_20250829_061157_best-best.pth
+  pretext_ckpt: /home/songd/research/pose2nav/checkpoint/pretext/socialnav_pretext_vicreg_d512_20250831_best
 
 logger:
   project: socialnav_downstream

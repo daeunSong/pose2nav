@@ -334,7 +334,7 @@ class LearnerDownstream:
 
                 # rich downstream checkpoint
                 state = {
-                    "time": ts,
+                    "time": timestamp,
                     "epoch": epoch + 1,
                     "best": float(best_loss),
                     "last_loss": float(loss),
@@ -377,4 +377,4 @@ if __name__ == "__main__":
     learner.train()
 
 # Usage:
-# python pose2nav/train_downstream.py --cfg pose2nav/config/train_downstream.yaml --pretext_ckpt path/to/pretext_*.pt
+# python pose2nav/train_downstream.py --cfg pose2nav/config/train.yaml
