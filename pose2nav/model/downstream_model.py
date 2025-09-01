@@ -57,10 +57,10 @@ class DownstreamTrajPredictor(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.backbone = PretextModel(cfg)
-        d = getattr(cfg.model, "d", 256)
+        d = getattr(cfg.model.projector, "d_out", 1024)
         T_pred = cfg.model.input.T_pred
         d_goal = getattr(cfg.model, "d_goal", None)
-        d_hidden = getattr(cfg.model, "d_hidden", None)
+        d_hidden = getattr(cfg.model.projector, "hidden", None)
 
         self.head = TrajHeadWithGoalAbs(d=d, T_pred=T_pred, d_goal=d_goal, d_hidden=d_hidden)
 

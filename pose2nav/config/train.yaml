@@ -8,7 +8,7 @@ dataset:
 train_params:
   seed: 42
   batch_size: 16
-  epochs: 50           # total downstream epochs (Stage-1 + Stage-2)
+  epochs: 200           # total downstream epochs (Stage-1 + Stage-2)
   head_lr: 5e-4        # LR for the MLP head (both stages)
   backbone_lr: 1e-4    # LR for backbone during Stage-2
   weight_decay: 1e-5
@@ -19,12 +19,11 @@ train_params:
   sample_ratio: 1.0     # set <1.0 to subsample the dataset for quick runs
   sample_seed: 42
   log_every: 50
-  clip_grad_norm: 1.0
 
 model:
-  d: 1024  # Must match the d_out in pretext
+  d: 512
   d_goal: 64
-  d_hidden: 1024
+  human_pool_temp: 1.0
 
   input:
     T_obs: 6
@@ -55,10 +54,17 @@ model:
     
 directory:
   model_dir: /home/songd/research/pose2nav/checkpoint/downstream/   
-  pretext_ckpt: /home/songd/research/pose2nav/checkpoint/pretext/socialnav_pretext_vicreg_d512_20250831_best
+  pretext_ckpt: /home/songd/research/pose2nav/checkpoint/pretext/socialnav_pretext_vicreg_d512_20250901_best
 
 logger:
-  project: socialnav_downstream
-  entity: daeun-song-george-mason-university
-  mode: online
-  experiment_name: socialnav_downstream_e${train_params.epochs}
+  pretext:
+    project: socialnav_pretext
+    entity: daeun-song-george-mason-university
+    mode: online
+    experiment_name: socialnav_pretext_${train_params.loss}_d${model.d}
+
+  downstream:
+    project: socialnav_downstream
+    entity: daeun-song-george-mason-university
+    mode: online
+    experiment_name: socialnav_downstream_e${train_params.epochs}

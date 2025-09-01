@@ -17,7 +17,7 @@ from model.data_loader import SocialNavDataset
 from model.pretext_model import PretextModel
 from model.losses import get_loss_fn
 from utils.helpers import get_conf, tensor_stats, NaNGuard
-from utils.nn import save_checkpoint
+from utils.nn import save_checkpoint, load_checkpoint
 
 
 class Learner:
@@ -130,10 +130,10 @@ class Learner:
         if not self.use_wandb:
             self.run = None
             return
-        project = getattr(self.cfg.logger, "project", "pretext")
-        entity = getattr(self.cfg.logger, "entity", None)
-        mode = getattr(self.cfg.logger, "mode", "online")  # "online"|"offline"|"disabled"
-        exp = getattr(self.cfg.logger, "experiment_name", "exp")
+        project = getattr(self.cfg.logger.pretext, "project", "pretext")
+        entity = getattr(self.cfg.logger.pretext, "entity", None)
+        mode = getattr(self.cfg.logger.pretext, "mode", "online")  # "online"|"offline"|"disabled"
+        exp = getattr(self.cfg.logger.pretext, "experiment_name", "exp")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_name = f"{exp}_{timestamp}"
 
@@ -143,7 +143,7 @@ class Learner:
             name=run_name,
             mode=mode,
             config=self._cfg_to_dict(self.cfg),
-            tags=getattr(self.cfg.logger, "tags", None),
+            tags=getattr(self.cfg.logger.pretext, "tags", None),
         )
         wandb.watch(self.model, log="all", log_freq=100)
 
@@ -219,7 +219,7 @@ class Learner:
 
         return total_loss / max(1, num_batches)
 
-    def train(self):
+    def train(self, resume: str = ""):
         print(f"Using device: {self.device}")
         epochs = int(self.cfg.train_params.get("epochs", 20))
         save_every   = int(self.cfg.train_params.get("save_every", 5))
@@ -232,6 +232,44 @@ class Learner:
             or "checkpoints/pretext"
         )
         os.makedirs(model_dir, exist_ok=True)
+
+        # ---------- RESUME ----------
+        ckpt_path = None
+        if resume:
+            if resume == "auto":
+                # pick the latest *.pth in model_dir
+                cands = [os.path.join(model_dir, f) for f in os.listdir(model_dir) if f.endswith(".pth")]
+                if cands:
+                    ckpt_path = max(cands, key=os.path.getmtime)
+            else:
+                ckpt_path = resume
+
+        if ckpt_path and os.path.isfile(ckpt_path):
+            print(f"[Resume] Loading checkpoint: {ckpt_path}")
+            state = load_checkpoint(ckpt_path, device=self.device)
+
+            # 1) model
+            self.model.load_state_dict(state["model"], strict=True)
+
+            # 2) optimizer
+            try:
+                self.optimizer.load_state_dict(state["optimizer"])
+            except Exception as e:
+                print(f"[Resume][Warn] Optimizer state load failed ({e}). Continuing with fresh optimizer.")
+
+            # 3) bookkeeping
+            best_loss = float(state.get("best", best_loss))
+            self.global_step = int(state.get("iteration", 0))
+            # saved 'epoch' was the one just finished; continue from that
+            start_epoch = int(state.get("epoch", 0))
+
+            print(f"[Resume] epoch={start_epoch}, best_loss={best_loss:.4f}, global_step={self.global_step}")
+
+            # (optional) override LR/WD from current config after loading optimizer
+            new_lr = self.cfg.train_params.get("lr", None)
+            if new_lr is not None:
+                for g in self.optimizer.param_groups:
+                    g["lr"] = new_lr
 
         for epoch in range(epochs):
             avg_loss = self.train_one_epoch(epoch_idx=epoch)
@@ -277,10 +315,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--cfg", type=str, required=True)
     parser.add_argument("--no_wandb", action="store_true", help="Disable Weights & Biases logging")
+    parser.add_argument("--resume", type=str, default="", help="Path to a .pth checkpoint to resume from (or 'auto')")
     args = parser.parse_args()
 
     learner = Learner(args.cfg, use_wandb=not args.no_wandb)
-    learner.train()
+    learner.train(resume=args.resume)
 
 # Usage:
 # python pose2nav/train_pretext.py --cfg pose2nav/config/train.yaml
+# python pose2nav/train_pretext.py --cfg pose2nav/config/train.yaml --resume checkpoint/pretext/socialnav_pretext_vicreg_d512_20250831_best.pth

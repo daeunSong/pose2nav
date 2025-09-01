@@ -180,10 +180,10 @@ class LearnerDownstream:
         if not self.use_wandb:
             self.run = None
             return
-        project = getattr(self.cfg.logger, "project", "downstream")
-        entity  = getattr(self.cfg.logger, "entity", None)
-        mode    = getattr(self.cfg.logger, "mode", "online")
-        exp     = getattr(self.cfg.logger, "experiment_name", "downstream_exp")
+        project = getattr(self.cfg.logger, "downstream", "project", "downstream")
+        entity  = getattr(self.cfg.logger, "downstream", "entity", None)
+        mode    = getattr(self.cfg.logger, "downstream", "mode", "online")
+        exp     = getattr(self.cfg.logger, "downstream", "experiment_name", "downstream_exp")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_name = f"{exp}_{timestamp}"
 
@@ -193,7 +193,7 @@ class LearnerDownstream:
             name=run_name,
             mode=mode,
             config=self._cfg_to_dict(self.cfg),
-            tags=getattr(self.cfg.logger, "tags", None),
+            tags=getattr(self.cfg.logger, "downstream", "tags", None),
         )
         wandb.watch(self.model, log="all", log_freq=200)
 

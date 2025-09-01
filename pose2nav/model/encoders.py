@@ -9,7 +9,7 @@ def mlp_block(input_dim: int, hidden_dim: int, output_dim: int, use_ln_in: bool 
     layers = []
     if use_ln_in:
         layers.append(nn.LayerNorm(input_dim))
-    layers += [nn.Linear(input_dim, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, output_dim)]
+    layers += [nn.Linear(input_dim, hidden_dim), nn.LeakyReLU(0.2), nn.Linear(hidden_dim, output_dim)]
     if use_ln_out:
         layers.append(nn.LayerNorm(output_dim))
     return nn.Sequential(*layers)
@@ -155,7 +155,8 @@ class KeypointEncoder2D(nn.Module):
         if self.mlp is None:
             self.mlp = nn.Sequential(
                 nn.LayerNorm(F_in),
-                nn.Linear(F_in, self.hidden), nn.GELU(),
+                nn.Linear(F_in, self.hidden), 
+                nn.LeakyReLU(0.2),
                 nn.Linear(self.hidden, self.output_dim),
                 nn.LayerNorm(self.output_dim),
             ).to(x.device)
@@ -188,7 +189,8 @@ class RootPointEncoder2D(nn.Module):
         if self.mlp is None:
             self.mlp = nn.Sequential(
                 nn.LayerNorm(F_in),
-                nn.Linear(F_in, self.hidden), nn.GELU(),
+                nn.Linear(F_in, self.hidden), 
+                nn.LeakyReLU(0.2),
                 nn.Linear(self.hidden, self.output_dim),
                 nn.LayerNorm(self.output_dim),
             ).to(x.device)
