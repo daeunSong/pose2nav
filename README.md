@@ -83,7 +83,7 @@ mim install "mmpose>=1.1.0"
 2. Play the ROS bag -->
 
 ```
-conda env create -f environment.yaml
+conda env create -f environment_learner.yaml
 conda activate learner
 
 export PYTHONPATH=$(pwd)/pose2nav:$PYTHONPATH

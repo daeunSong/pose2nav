@@ -6,10 +6,10 @@ To download SCAND please follow [this](https://dataverse.tdl.org/dataset.xhtml?p
 ## Installing Dependencies
 The parser requires `Python>=3.9` for type annotations. `pyntcloud` package works best with `pandas==2.0.1`.
 
+Run in the root folder:
 ```
-conda env create -f env.yaml
-conda activate pose2nav
-pip install -r requirements.txt
+conda env create -f environment_parser.yaml
+conda activate parser
 export PYTHONPATH=$(pwd)/pose2nav:$PYTHONPATH
 export PYTHONPATH=$(pwd)/pose2nav/skeleton/_monoloco:$PYTHONPATH
 export PYTHONPATH=$(pwd)/pose2nav/skeleton/_mmpose:$PYTHONPATH
