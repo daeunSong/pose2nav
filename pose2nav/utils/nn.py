@@ -5,7 +5,7 @@ import shutil
 import os
 import datetime
 
-def save_checkpoint(state: dict, is_best: bool, save_dir: str, name: str):
+def save_checkpoint(state: dict, is_best: bool, save_dir: str, name: str, epoch: int):
     """
     Save {save_dir}/{name}.pth always.
     If is_best=True, also save {save_dir}/{name}_best.pth.
@@ -13,7 +13,7 @@ def save_checkpoint(state: dict, is_best: bool, save_dir: str, name: str):
     """
     os.makedirs(save_dir, exist_ok=True)
 
-    base_path = os.path.join(save_dir, f"{name}.pth")
+    base_path = os.path.join(save_dir, f"{name}_e{epoch}.pth")
     torch.save(state, base_path)
     path = base_path
 

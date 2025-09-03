@@ -179,7 +179,7 @@ class SocialNavDataset(Dataset):
             "past_root_3d": self.data["past_root_3d"][idx],
             "future_root_3d": self.data["future_root_3d"][idx],
 
-            # NEW: single original RGB path for the last observed frame
+            # Single original RGB path for the last observed frame
             "last_past_frame_path": last_past_frame_path,
         }
 
@@ -202,8 +202,6 @@ class SocialNavDataset(Dataset):
         current = np.array(current, dtype=np.float32)[:2]
         sample["past_positions"]   = (past_xy   - current).dot(current_rot) * self.metric_waypoint_spacing
         sample["future_positions"] = (future_xy - current).dot(current_rot) * self.metric_waypoint_spacing
-
-        # print(f"Before Egocentric transform: {sample['past_kp_3d'][-1]}")
 
         # Egocentric keypoints
         for key, pos_xy, yaws in [
@@ -232,8 +230,6 @@ class SocialNavDataset(Dataset):
                 arr[t] = flat.reshape(arr[t].shape)
 
             sample[key] = arr
-
-        # print(f"After Egocentric transform: {sample['past_kp_3d'][-1]}")
 
         # Goal direction
         dt = np.random.randint(low=len(sample["future_positions"]) // 2,

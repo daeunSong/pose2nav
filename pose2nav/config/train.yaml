@@ -5,15 +5,21 @@ dataset:
   resize: [224, 224] #[192, 192]  # decrease
   metric_waypoint_spacing: 1.0
 
+# Dataloader parameters
+dataloader:
+  num_workers: 16  # increase #######
+  batch_size: 32   # increase #######
+  shuffle: True # whether to shuffle data or not
+  pin_memory: True # use pageable memory or pinned memory (https://developer.nvidia.com/blog/how-optimize-data-transfers-cuda-cc/)
+
 train_params:
   seed: 42
-  batch_size: 32    # increase #######
   epochs: 200           
   head_lr: 5e-4        
   backbone_lr: 1e-4    
   weight_decay: 1e-5
-  num_workers: 4
   save_every: 50
+  save_best: 150
   loss: vicreg
   sample_seed: 42
   log_every: 50
@@ -48,20 +54,28 @@ model:
   # downstream
   future_traj_encoder:
     hidden: 1024
+
+loss_params:
+  vicreg:
+    sim_coef: 25.0
+    std_coef: 25.0
+    cov_coef: 5.0
+    # eps: 1e-4
     
 directory:
-  model_dir: /home/songd/research/pose2nav/checkpoint/downstream/   
-  pretext_ckpt: /home/songd/research/pose2nav/checkpoint/pretext/socialnav_pretext_vicreg_d512_20250901_best
+  pretext_model_dir: /home/songd/research/pose2nav/checkpoint/downstream/   
+  downstream_model_dir: /home/songd/research/pose2nav/checkpoint/downstream/   
+  pretext_ckpt: s${directory.pretext_model_dir}/s${logger.pretext.experiment_name}_best
 
 logger:
   pretext:
     project: socialnav_pretext
     entity: daeun-song-george-mason-university
     mode: online
-    experiment_name: socialnav_pretext_${train_params.loss}_d${model.d}
+    experiment_name: s${logger.pretext.project}_d${model.d}_exp2
 
   downstream:
     project: socialnav_downstream
     entity: daeun-song-george-mason-university
     mode: online
-    experiment_name: socialnav_downstream_e${train_params.epochs}
+    experiment_name: ${logger.downstream.project}_d${model.d}_exp2

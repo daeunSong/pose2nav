@@ -42,7 +42,7 @@ def off_diagonal(x):
 #     return sim_w * inv + var_w * v + cov_w * c
 
 def vicreg_loss(
-    z1, z2, sim_coeff: float = 25.0, std_coeff: float = 25.0, cov_coeff: float = 1.0
+    z1, z2, sim_coef: float = 25.0, std_coef: float = 25.0, cov_coef: float = 5.0
 ):
     repr_loss = F.mse_loss(z1, z2)
 
@@ -59,7 +59,7 @@ def vicreg_loss(
         cov_y
     ).pow_(2).sum().div_(z2.shape[1])
 
-    loss = sim_coeff * repr_loss + std_coeff * std_loss + cov_coeff * cov_loss
+    loss = sim_coef * repr_loss + std_coef * std_loss + cov_coef * cov_loss
     return loss, (repr_loss, std_loss, cov_loss)
 
 # ---------- selector ----------

@@ -79,12 +79,7 @@ class Learner:
 
         self.train_loader = DataLoader(
             dataset,
-            batch_size=self.cfg.train_params.get("batch_size", 32),
-            shuffle=True,
-            num_workers=self.cfg.train_params.get("num_workers", 10),
-            pin_memory=True,
-            drop_last=True,
-            prefetch_factor = 2, # 
+            **self.cfg.dataloader,
         )
 
     def init_model(self):
@@ -156,7 +151,7 @@ class Learner:
         total_loss, num_batches = 0.0, 0
 
         pbar = tqdm(self.train_loader, desc=f"Train E{epoch_idx+1}", leave=False)
-        for data in pbar:
+        for data in pbar:   # batch
             self.model.train()
             
             # move data to device
@@ -182,11 +177,11 @@ class Learner:
             if self.use_wandb:
                 wandb.log({
                     "train/loss_step": float(loss.item()),
-                    "train/sim_loss": float(sim_loss), # similarity
-                    "train/std_loss": float(std_loss), # invariance
-                    "train/cov_loss": float(cov_loss), # covariance
+                    "train/sim_loss": float(sim_loss.item()), # similarity
+                    "train/std_loss": float(std_loss.item()), # invariance
+                    "train/cov_loss": float(cov_loss.item()), # covariance
                     "train/lr": self.optimizer.param_groups[0]["lr"],
-                    "train/epoch": epoch_idx + 1,
+                    # "train/epoch": epoch_idx + 1,
                 }, step=self.global_step)
 
             self.global_step += 1
@@ -196,13 +191,13 @@ class Learner:
     def train(self, resume: str = ""):
         print(f"Using device: {self.device}")
         epochs = int(self.cfg.train_params.get("epochs", 20))
-        save_every   = int(self.cfg.train_params.get("save_every", 5))
+        save_every   = int(self.cfg.train_params.get("save_every", 50))
+        save_best = int(self.cfg.train_params.get("save_best", 150))
         best_loss = float("inf")
 
         # Resolve save dir from config (fallbacks)
         model_dir = (
-            getattr(self.cfg.directory, "model_dir", None)
-            or getattr(self.cfg.directory, "save", None)
+            getattr(self.cfg.directory, "pretext_model_dir", None)
             or "checkpoints/pretext"
         )
         os.makedirs(model_dir, exist_ok=True)
@@ -218,7 +213,7 @@ class Learner:
             if is_best:
                 best_loss = avg_loss
 
-            if is_best or ((epoch + 1) % save_every == 0):
+            if (epoch + 1) % save_every == 0 or (is_best and (epoch + 1) >= save_best):
                 timestamp  = datetime.now().strftime("%Y%m%d")
                 tag = "best" if is_best else f"e{epoch+1}"
                 name = f"{self.cfg.logger.pretext.experiment_name}_{timestamp}"
@@ -229,7 +224,7 @@ class Learner:
                     best=best_loss,
                     last_loss=avg_loss,
                 )
-                ckpt_path = save_checkpoint(checkpoint, is_best, model_dir, name)   # writes {name}.pth (+ -best.pth if best)
+                ckpt_path = save_checkpoint(checkpoint, is_best, model_dir, name, epoch+1)   # writes {name}.pth (+ -best.pth if best)
                 print(f"[Checkpoint] Saved to {ckpt_path}")
 
                 if self.use_wandb and os.path.isfile(ckpt_path):
