@@ -1,0 +1,64 @@
+dataset:
+  index_file: "data/processed/samples/samples_train_index.json"
+  only_human_visable: true
+  only_nonlinear: true
+  resize: [224, 224] #[192, 192]
+  metric_waypoint_spacing: 1.0
+
+train_params:
+  seed: 42
+  batch_size: 16
+  epochs: 50           # total downstream epochs (Stage-1 + Stage-2)
+  head_lr: 5e-4        # LR for the MLP head (both stages)
+  backbone_lr: 1e-4    # LR for backbone during Stage-2
+  weight_decay: 1e-5
+  num_workers: 4
+  save_every: 2
+  loss: vicreg
+  clip_grad_norm: 1.0
+  sample_ratio: 1.0     # set <1.0 to subsample the dataset for quick runs
+  sample_seed: 42
+  log_every: 50
+  clip_grad_norm: 1.0
+
+model:
+  d: 1024  # Must match the d_out in pretext
+  d_goal: 64
+  d_hidden: 1024
+
+  input:
+    T_obs: 6
+    T_pred: 6
+    N_human: 3
+    N_joints: 17
+
+  image_encoder:
+    name: dino
+    pretrained: true
+
+  obs_transformer:
+    layers: 3
+    heads: 4
+    ff_mult: 4
+    dropout: 0.1
+    norm: preln        # or "postln"
+
+  projector:
+    use: true
+    d_out: 1024          # output dim of z_obs / z_traj
+    hidden: 1024       
+
+  # downstream
+  future_traj_encoder:
+    hidden: 1024
+    num_layers: 1
+    
+directory:
+  model_dir: /home/songd/research/pose2nav/checkpoint/downstream/   
+  pretext_ckpt: /home/songd/research/pose2nav/checkpoint/pretext/socialnav_pretext_vicreg_d512_20250831_best
+
+logger:
+  project: socialnav_downstream
+  entity: daeun-song-george-mason-university
+  mode: online
+  experiment_name: socialnav_downstream_e${train_params.epochs}

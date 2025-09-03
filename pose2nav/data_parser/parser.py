@@ -39,7 +39,7 @@ def create_samples(input_path, obs_window: int = 6, pred_window: int = 8,
     obs_window (int): observation window (history)
     pred_window (int): prediction window
     """
-    print(f"input_path: {input_path}")
+    # print(f"input_path: {input_path}")
     with input_path.open("rb") as f:
         traj_data = pickle.load(f)
 
@@ -135,7 +135,6 @@ def create_samples(input_path, obs_window: int = 6, pred_window: int = 8,
         past_frames.append(pf)
         goal_frames.append(gf)
 
-        # NEW: store ONLY the last observed frame path as string
         last_p = pf[-1] if len(pf) > 0 else None
         last_past_frame_path.append(str(last_p) if last_p is not None else None)
 
@@ -171,10 +170,10 @@ def create_samples(input_path, obs_window: int = 6, pred_window: int = 8,
         "future_root_3d": future_root_3d,
         "has_humans": has_humans,
 
-        # NEW: single path per sample for visualization
+        # for visualization
         "last_past_frame_path": last_past_frame_path,
     }
-    print(f"has_human_counter = {has_human_counter}/{len(has_humans)}")
+    # print(f"has_human_counter = {has_human_counter}/{len(has_humans)}")
     return post_processed
 
 
@@ -184,6 +183,10 @@ def merge(base_dict: dict, new_dict: dict):
     base_dict (dict): The base dictionary to be updated
     new_dict (dict): The new data to be added to the base dictionary
     """
+    if base_dict == None:  # first shard
+        # make a fresh copy so later extends don't alias
+        return {k: list(v) for k, v in new_dict.items()}
+    
     # assert base_dict is None, "Base dictionary cannot be None"
     assert (
         base_dict.keys() == new_dict.keys()
@@ -310,22 +313,9 @@ if __name__ == "__main__":
     else:                 
         if args.create_samples:
             save_dir = Path(cfg.parsed_dir)
-            samples_dir = save_dir.parent / "samples"
-            samples_dir.mkdir(exist_ok=True, parents=True)
-
-            shard_size = 5000  # samples per shard file
-            shard_idx = 0
-            buffer = None
-            shard_info = []  # will store {"file": ..., "count": ...} for each shard
-
-            def save_shard(data_dict, shard_idx):
-                shard_path = samples_dir / f"samples_{shard_idx:04d}.pkl"
-                with shard_path.open("wb") as f:
-                    pickle.dump(data_dict, f)
-                shard_info.append({"file": str(shard_path), "count": len(data_dict["past_frames"])})
-                print(f"[Info] Saved shard {shard_idx} with {len(data_dict['past_frames'])} samples")
 
             list_pickles = list(save_dir.glob("**/traj_data.pkl"))
+            base_dict = None
             bar = tqdm(list_pickles, desc="Creating samples: ")
 
             for file_name in bar:
@@ -337,37 +327,13 @@ if __name__ == "__main__":
                     linear_threshold=cfg.linear_threshold,
                     num_ped=cfg.num_ped
                 )
+                base_dict = merge(base_dict, post_processed)
 
-                if buffer is None:
-                    buffer = post_processed
-                else:
-                    buffer = merge(buffer, post_processed)
+            samples_path = save_dir / "samples.pkl"
+            with samples_path.open("wb") as f:
+                pickle.dump(base_dict, f)
 
-                if len(buffer["past_frames"]) >= shard_size:
-                    save_shard(buffer, shard_idx)
-                    shard_idx += 1
-                    buffer = None
-
-            if buffer is not None and len(buffer["past_frames"]) > 0:
-                save_shard(buffer, shard_idx)
-
-            # 🔹 Randomly split shard files into train and val (80/20)
-            indices = np.arange(len(shard_info))
-            np.random.shuffle(indices)
-            split_point = int(len(indices) * 0.8)
-            train_shards = [shard_info[i] for i in indices[:split_point]]
-            val_shards = [shard_info[i] for i in indices[split_point:]]
-
-            # 🔹 Save train/val index JSON files
-            train_index_path = samples_dir / "samples_train_index.json"
-            val_index_path = samples_dir / "samples_val_index.json"
-            with train_index_path.open("w") as f:
-                json.dump(train_shards, f, indent=2)
-            with val_index_path.open("w") as f:
-                json.dump(val_shards, f, indent=2)
-
-            print(f"[Info] Train index saved to {train_index_path}")
-            print(f"[Info] Val index saved to {val_index_path}")
+            print(f"{len(base_dict['past_positions'])} samples saved to {samples_path}")
 
         # Data Parsing
         else:
@@ -402,20 +368,20 @@ if __name__ == "__main__":
                     except Exception as e:
                         print(f"[ERROR] Crashed on {bag}")
             
-            # TODO: need to fix it into ROS2
-            elif dataset == "sbpd":
-                from data_parser.sbpd_parser import SBPDParser
-                cfg.scand.update({"sample_rate": cfg.sample_rate})
-                cfg.scand.update({"save_dir": cfg.parsed_dir})
-                data_parser = SBPDParser(cfg.sbpd)
-                bag_files = Path(data_parser.cfg.bags_dir).resolve()
-                bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".db3"]
-                # process_map(data_parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
-                for bag in tqdm(bag_files):
-                    try:
-                        data_parser.parse_bags(bag)
-                        print(f"[Info] Done parisng {bag}")
-                    except Exception as e:
-                        print(f"[ERROR] Crashed on {bag}")
-            else:
-                raise Exception("Invalid dataset!")
+            # # TODO: need to fix it into ROS2
+            # elif dataset == "sbpd":
+            #     from data_parser.sbpd_parser import SBPDParser
+            #     cfg.scand.update({"sample_rate": cfg.sample_rate})
+            #     cfg.scand.update({"save_dir": cfg.parsed_dir})
+            #     data_parser = SBPDParser(cfg.sbpd)
+            #     bag_files = Path(data_parser.cfg.bags_dir).resolve()
+            #     bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".db3"]
+            #     # process_map(data_parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
+            #     for bag in tqdm(bag_files):
+            #         try:
+            #             data_parser.parse_bags(bag)
+            #             print(f"[Info] Done parisng {bag}")
+            #         except Exception as e:
+            #             print(f"[ERROR] Crashed on {bag}")
+            # else:
+            #     raise Exception("Invalid dataset!")

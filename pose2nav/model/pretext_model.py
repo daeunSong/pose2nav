@@ -51,9 +51,9 @@ class PretextModel(nn.Module):
             coord_dim=2, output_dim=d
         )
         self.future_traj_encoder = TrajectoryEncoder(
+            input_dim=2, 
+            T_pred = self.T_pred, 
             output_dim=d,
-            hidden=int(cfg.model.future_traj_encoder.hidden),
-            num_layers=int(cfg.model.future_traj_encoder.num_layers),
         )
 
         # === Per-human pooling across humans per frame (linear-softmax on keypoint embeddings only) ===
@@ -73,11 +73,11 @@ class PretextModel(nn.Module):
         enc_layer = nn.TransformerEncoderLayer(
             d_model=d,
             nhead=int(otc.heads),
-            dim_feedforward=int(otc.ff_mult) * d,
+            dim_feedforward= 2 * d,
             dropout=float(otc.dropout),
             activation="relu",
             batch_first=True,
-            norm_first=(str(otc.norm).lower() == "preln"),
+            norm_first=True, #preln
         )
         self.observation_encoder = nn.TransformerEncoder(enc_layer, num_layers=int(otc.layers))
         self.final_ln = nn.LayerNorm(d)
@@ -91,10 +91,10 @@ class PretextModel(nn.Module):
             return nn.Sequential(
                 nn.Linear(d_in, d_hidden, bias=False),
                 nn.BatchNorm1d(d_hidden, eps=1e-5, affine=True),
-                nn.ReLU(inplace=True),
+                nn.ReLU(inplace=False),
                 nn.Linear(d_hidden, d_hidden, bias=False),
                 nn.BatchNorm1d(d_hidden, eps=1e-5, affine=True),
-                nn.ReLU(inplace=True),
+                nn.ReLU(inplace=False),
                 nn.Linear(d_hidden, d_out, bias=False),
             )
         self.proj_obs    = projector(d, prj_hidden_w, prj_d_out)

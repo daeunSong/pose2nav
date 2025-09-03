@@ -1,22 +1,20 @@
 dataset:
-  index_file: "data/processed/samples/samples_train_index.json"
+  sample_file: "data/train/samples.pkl"
   only_human_visable: true
   only_nonlinear: true
-  resize: [224, 224] #[192, 192]
+  resize: [224, 224] #[192, 192]  # decrease
   metric_waypoint_spacing: 1.0
 
 train_params:
   seed: 42
-  batch_size: 16
-  epochs: 200           # total downstream epochs (Stage-1 + Stage-2)
-  head_lr: 5e-4        # LR for the MLP head (both stages)
-  backbone_lr: 1e-4    # LR for backbone during Stage-2
+  batch_size: 32    # increase #######
+  epochs: 200           
+  head_lr: 5e-4        
+  backbone_lr: 1e-4    
   weight_decay: 1e-5
   num_workers: 4
-  save_every: 2
+  save_every: 50
   loss: vicreg
-  clip_grad_norm: 1.0
-  sample_ratio: 1.0     # set <1.0 to subsample the dataset for quick runs
   sample_seed: 42
   log_every: 50
 
@@ -27,8 +25,8 @@ model:
 
   input:
     T_obs: 6
-    T_pred: 6
-    N_human: 3
+    T_pred: 12
+    N_human: 6
     N_joints: 17
 
   image_encoder:
@@ -37,20 +35,19 @@ model:
 
   obs_transformer:
     layers: 3
-    heads: 4
+    heads: 4      # increase #######
     ff_mult: 4
     dropout: 0.1
     norm: preln        # or "postln"
 
   projector:
     use: true
-    d_out: 1024          # output dim of z_obs / z_traj
+    d_out: 2048          # 4096
     hidden: 1024       
 
   # downstream
   future_traj_encoder:
     hidden: 1024
-    num_layers: 1
     
 directory:
   model_dir: /home/songd/research/pose2nav/checkpoint/downstream/   

@@ -35,7 +35,7 @@ class Solarization(object):
 class SocialNavDataset(Dataset):
     def __init__(
         self,
-        index_file: str,
+        sample_file: str,
         train: bool = True,
         resize: Union[list, tuple] = (224, 224),
         metric_waypoint_spacing: float = 1.0,
@@ -44,7 +44,7 @@ class SocialNavDataset(Dataset):
         cache_size: int = 1                   # keep this small to save RAM
     ):
         """
-        Dataloader that loads from an index JSON file of shards.
+        Dataloader that loads from an sample pkl file of shards.
         Loads shards lazily to avoid huge memory usage.
         """
         self.resize = resize
@@ -55,89 +55,124 @@ class SocialNavDataset(Dataset):
         self.cache_size = cache_size
         self.shard_cache = {}  # shard_path -> loaded shard dict
 
-        # Load the index JSON
-        with open(index_file, "r") as f:
-            self.index_info = json.load(f)
-
-        # Build flat (shard_file, local_idx) list (apply filters per-shard)
-        self.samples = []
-        for shard in self.index_info:
-            shard_path = Path(shard["file"])
-            with shard_path.open("rb") as f:
-                shard_data = pickle.load(f)
-
-            total = len(shard_data["past_frames"])
-            mask = np.ones(total, dtype=bool)
-
-            if self.only_human_visable:
-                hv = np.asarray(shard_data["has_humans"]).astype(bool)
-                if hv.shape[0] != total:
-                    raise ValueError(f"has_humans length mismatch in {shard_path}")
-                mask &= hv
-
-            if self.only_nonlinear:
-                # parser stores key as "non_linear" (singular)
-                nl = np.asarray(shard_data.get("non_linear", [False] * total)).astype(bool)
-                if nl.shape[0] != total:
-                    raise ValueError(f"non_linear length mismatch in {shard_path}")
-                mask &= nl
-
-            indices = np.nonzero(mask)[0]
-
-            for local_idx in indices:
-                self.samples.append((str(shard_path), int(local_idx)))
-
-            # free immediately (don’t keep shard_data)
-            del shard_data
+        # read and store directories
+        with Path(sample_file).open("rb") as f:
+            self.data = pickle.load(f)
 
         # Define transformations
-        # if self.train:
-        #     self.transform = transforms.Compose([
-        #         transforms.RandomResizedCrop(224, interpolation=transforms.InterpolationMode.BICUBIC),
-        #         transforms.Resize(self.resize, antialias=True),
-        #         # transforms.RandomHorizontalFlip(p=0.5),
-        #         transforms.RandomAutocontrast(p=0.4),
-        #         transforms.RandomApply([
-        #             transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)
-        #         ], p=0.8),
-        #         transforms.RandomGrayscale(p=0.2),
-        #         GaussianBlur(p=0.6),
-        #         Solarization(p=0.5),
-        #         transforms.ToTensor(),
-        #         transforms.Normalize(mean=[0.485, 0.456, 0.406],
-        #                              std=[0.229, 0.224, 0.225]),
-        #     ])
-        # else:
-        self.transform = transforms.Compose([
-            transforms.Resize(self.resize, antialias=True),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                    std=[0.229, 0.224, 0.225]),
-        ])
+        if self.train:
+            self.transform = transforms.Compose([
+                transforms.RandomResizedCrop(224, interpolation=transforms.InterpolationMode.BICUBIC),
+                transforms.Resize(self.resize, antialias=True),
+                # transforms.RandomHorizontalFlip(p=0.5),
+                transforms.RandomAutocontrast(p=0.4),
+                transforms.RandomApply([
+                    transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)
+                ], p=0.8),
+                transforms.RandomGrayscale(p=0.2),
+                GaussianBlur(p=0.6),
+                Solarization(p=0.5),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225]),
+            ])
+        else:
+            self.transform = transforms.Compose([
+                transforms.Resize(self.resize, antialias=True),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225]),
+            ])
+
+        N = len(self.data["past_positions"])
+        nonlin_mask = np.asarray(self.data["non_linear"])      
+        humans_mask = np.asarray(self.data["has_humans"])      
+        base    = np.ones(N, dtype=bool)
+
+        # note: keep your config names; you used 'only_nonlinear' and 'only_human_visable'
+        if self.only_nonlinear and self.only_human_visable:
+            keep = nonlin_mask & humans_mask          # BOTH must be 1
+        elif self.only_nonlinear:
+            keep = nonlin_mask                        # non-linear only
+        elif self.only_human_visable:
+            keep = humans_mask                        # humans only
+        else:
+            keep = base                               # no filtering
+
+        self._apply_mask_inplace(keep)
+        print(f"nonlinear: {sum(nonlin_mask)}, humans: {sum(humans_mask)}, both: {sum(keep)}")
+
+        def _apply_mask_inplace(self, keep_mask: np.ndarray):
+            """keep_mask: bool array of shape [N]; applies to ALL per-sample lists."""
+            keep_mask = np.asarray(keep_mask, dtype=bool).reshape(-1)
+            N = len(self.data["past_positions"])
+            assert keep_mask.size == N, f"Mask len {keep_mask.size} != data len {N}"
+
+            idx = np.flatnonzero(keep_mask)
+            assert idx.size > 0, "[DATA][ERR] Mask removed all samples."
+
+            # sanity: all keys share same length before masking
+            for k, v in self.data.items():
+                if len(v) != N:
+                    raise ValueError(f"Length mismatch before masking: key={k} len={len(v)} vs {N}")
+
+            # apply same indices to every key (preserves types)
+            for k, v in list(self.data.items()):
+                self.data[k] = [v[i] for i in idx]
+
+            print(f"[DATA] kept {idx.size}/{keep_mask.size} samples after filtering.")
+
+        # if self.only_nonlinear:
+        #     # select non_linear trajectories
+        #     print(self.data["non_linear"])
+        #     non_linear_trajs = np.nonzero(self.data["non_linear"])
+        #     print(non_linear_trajs)
+
+        #     non_linear_trajs = np.nonzero(self.data["has_humans"])
+            # self.data["past_positions"] = np.array(self.data["past_positions"])[non_linear_trajs]
+            # self.data["future_positions"] = np.array(self.data["future_positions"])[non_linear_trajs]
+            # self.data["past_yaw"] = np.array(self.data["past_yaw"])[non_linear_trajs]
+            # self.data["future_yaw"] = np.array(self.data["future_yaw"])[non_linear_trajs]
+            # self.data["past_vw"] = np.array(self.data["past_vw"])[non_linear_trajs]
+            # self.data["future_vw"] = np.array(self.data["future_vw"])[non_linear_trajs]
+            # self.data["past_frames"] = np.array(self.data["past_frames"])[non_linear_trajs]
+            # self.data["future_frames"] = np.array(self.data["future_frames"])[non_linear_trajs]
+            # self.data["past_kp_3d"] = np.array(self.data["past_kp_3d"])[non_linear_trajs]
+            # self.data["future_kp_3d"] = np.array(self.data["future_kp_3d"])[non_linear_trajs]
+            # self.data["past_kp_2d"] = np.array(self.data["past_kp_2d"])[non_linear_trajs]
+            # self.data["future_kp_2d"] = np.array(self.data["future_kp_2d"])[non_linear_trajs]
+            # self.data["past_root_3d"] = np.array(self.data["past_root_3d"])[non_linear_trajs]
+            # self.data["future_root_3d"] = np.array(self.data["future_root_3d"])[non_linear_trajs]
+            # self.data["last_past_frame_path"] = np.array(self.data["last_past_frame_path"])[non_linear_trajs]
+
+    def _apply_mask_inplace(self, keep_mask):
+        # normalize mask → 1D bool of length N
+        keep_mask = np.asarray(keep_mask).reshape(-1).astype(bool)
+
+        N = len(self.data["past_positions"])
+        assert keep_mask.size == N, f"Mask len {keep_mask.size} != data len {N}"
+
+        kept = int(keep_mask.sum())
+        assert kept > 0, "[DATA][ERR] Mask removed all samples."
+
+        # sanity: all keys have the same length before masking
+        for k, v in self.data.items():
+            if len(v) != N:
+                raise ValueError(f"Length mismatch before masking: key={k} len={len(v)} vs {N}")
+
+        # filter every per-sample list with the same mask (preserves types)
+        for k, v in list(self.data.items()):
+            self.data[k] = [x for x, m in zip(v, keep_mask) if m]
+
+        print(f"[DATA] kept {kept}/{N} samples after filtering.")
+
 
     def __len__(self):
-        return len(self.samples)
-
-    def _load_shard(self, shard_path):
-        """Load shard from disk with LRU cache."""
-        if shard_path in self.shard_cache:
-            return self.shard_cache[shard_path]
-
-        with open(shard_path, "rb") as f:
-            shard_data = pickle.load(f)
-
-        # Manage cache size
-        if len(self.shard_cache) >= self.cache_size:
-            self.shard_cache.pop(next(iter(self.shard_cache)))
-        self.shard_cache[shard_path] = shard_data
-        return shard_data
+        return len(self.data["past_positions"])
 
     def __getitem__(self, idx):
-        shard_path, local_idx = self.samples[idx]
-        shard_data = self._load_shard(shard_path)
-
         # last past-frame path (string) for plotting later
-        past_paths = shard_data["past_frames"][local_idx]  # list[Path-like]
+        past_paths = self.data["past_frames"][idx]  # list[Path-like]
         last_past_frame_path = str(past_paths[-1]) if len(past_paths) > 0 else None
 
         past_frames = [
@@ -145,43 +180,83 @@ class SocialNavDataset(Dataset):
             for p in past_paths
         ]
 
-        future_paths = shard_data["future_frames"][local_idx]
+        future_paths = self.data["future_frames"][idx]
         future_frames = [
             self.transform(imread(str(p)).convert("RGB"))
             for p in future_paths
         ]
 
         sample = {
-            "past_positions": shard_data["past_positions"][local_idx],
-            "future_positions": shard_data["future_positions"][local_idx],
-            "past_yaw": shard_data["past_yaw"][local_idx],
-            "future_yaw": shard_data["future_yaw"][local_idx],
-            "past_vw": shard_data["past_vw"][local_idx],
-            "future_vw": shard_data["future_vw"][local_idx],
+            "past_positions": self.data["past_positions"][idx],
+            "future_positions": self.data["future_positions"][idx],
+            "past_yaw": self.data["past_yaw"][idx],
+            "future_yaw": self.data["future_yaw"][idx],
+            "past_vw": self.data["past_vw"][idx],
+            "future_vw": self.data["future_vw"][idx],
             "past_frames": past_frames,
             "future_frames": future_frames,
-            "past_kp_3d": shard_data["past_kp_3d"][local_idx],
-            "future_kp_3d": shard_data["future_kp_3d"][local_idx],
-            "past_kp_2d": shard_data["past_kp_2d"][local_idx],
-            "future_kp_2d": shard_data["future_kp_2d"][local_idx],
-            "past_root_3d": shard_data["past_root_3d"][local_idx],
-            "future_root_3d": shard_data["future_root_3d"][local_idx],
+            "past_kp_3d": self.data["past_kp_3d"][idx],
+            "future_kp_3d": self.data["future_kp_3d"][idx],
+            "past_kp_2d": self.data["past_kp_2d"][idx],
+            "future_kp_2d": self.data["future_kp_2d"][idx],
+            "past_root_3d": self.data["past_root_3d"][idx],
+            "future_root_3d": self.data["future_root_3d"][idx],
 
             # NEW: single original RGB path for the last observed frame
             "last_past_frame_path": last_past_frame_path,
         }
 
         # Egocentric normalization
+        def yaw_to_rot(yaw):
+            c, s = np.cos(yaw), np.sin(yaw)
+            return np.array([[c, -s],
+                            [s,  c]], dtype=np.float32)    
+
+        # Egocentric positions
         current = copy.deepcopy(sample["past_positions"][-1])
-        rot = np.array([
-            [np.cos(sample["past_yaw"][-1]), -np.sin(sample["past_yaw"][-1])],
-            [np.sin(sample["past_yaw"][-1]),  np.cos(sample["past_yaw"][-1])],
-        ], dtype=np.float32)
-        sample["past_positions"]   = np.array(sample["past_positions"],   dtype=np.float32)[:, :2]
-        sample["future_positions"] = np.array(sample["future_positions"], dtype=np.float32)[:, :2]
+        current_rot = yaw_to_rot(sample["past_yaw"][-1])
+        Rk_T = current_rot.T
+
+        past_xy = np.array(sample["past_positions"],   dtype=np.float32)[:, :2]
+        future_xy = np.array(sample["future_positions"], dtype=np.float32)[:, :2]
+        past_yaw   = np.asarray(sample["past_yaw"], dtype=np.float32)
+        future_yaw = np.asarray(sample["future_yaw"], dtype=np.float32)
+
         current = np.array(current, dtype=np.float32)[:2]
-        sample["past_positions"]   = (sample["past_positions"]   - current).dot(rot) * self.metric_waypoint_spacing
-        sample["future_positions"] = (sample["future_positions"] - current).dot(rot) * self.metric_waypoint_spacing
+        sample["past_positions"]   = (past_xy   - current).dot(current_rot) * self.metric_waypoint_spacing
+        sample["future_positions"] = (future_xy - current).dot(current_rot) * self.metric_waypoint_spacing
+
+        # print(f"Before Egocentric transform: {sample['past_kp_3d'][-1]}")
+
+        # Egocentric keypoints
+        for key, pos_xy, yaws in [
+            ("past_kp_3d",     past_xy,   past_yaw),
+            ("past_root_3d",   past_xy,   past_yaw),
+            ("future_kp_3d",   future_xy, future_yaw),
+            ("future_root_3d", future_xy, future_yaw),
+        ]:
+            arr = np.asarray(sample[key], dtype=np.float32)  # [T, ..., 3]
+            T = arr.shape[0]
+            for t in range(T):
+                # R_t from yaw[t]
+                Rt = yaw_to_rot(yaws[t])
+
+                # Relative rotation: R_rel = R_k^T * R_t  (2x2)
+                Rrel = Rk_T @ Rt
+
+                # Translation in pinned frame: ((pos_xy[t] - current) * R_k) * scale
+                t_rel_xy = ((pos_xy[t, :2] - current) @ current_rot) * self.metric_waypoint_spacing
+
+                # Apply to all keypoints/roots at time t (rotate XY, keep Z, then translate)
+                flat = arr[t].reshape(-1, 3)            # [M,3]
+                xy   = flat[:, :2] @ Rrel.T             # rotate into pinned orientation
+                xy  += t_rel_xy                         # translate into pinned coords
+                flat[:, :2] = xy
+                arr[t] = flat.reshape(arr[t].shape)
+
+            sample[key] = arr
+
+        # print(f"After Egocentric transform: {sample['past_kp_3d'][-1]}")
 
         # Goal direction
         dt = np.random.randint(low=len(sample["future_positions"]) // 2,
@@ -198,7 +273,7 @@ class SocialNavDataset(Dataset):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--index_file", type=str, required=True,
+    parser.add_argument("--sample_file", type=str, required=True,
                         help="Path to samples_train_index.json or samples_val_index.json")
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--num_workers", type=int, default=2)
@@ -209,7 +284,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     dataset = SocialNavDataset(
-        index_file=args.index_file,
+        sample_file=args.sample_file,
         train=args.train,
         only_human_visable=args.only_human_visable,
         only_nonlinear=args.only_nonlinear,

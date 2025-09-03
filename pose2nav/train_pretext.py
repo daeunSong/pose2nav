@@ -36,18 +36,17 @@ class Learner:
         self.init_logger()  # W&B init
 
     def _build_pretext_checkpoint(self, epoch:int, iteration:int, best:float, last_loss:float):
-        model = self.model.module if isinstance(self.model, torch.nn.DataParallel) else self.model
+        model = self.uncompiled_model
         ckpt = {
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "epoch": epoch,
-            "iteration": iteration,
-            "best": float(best),
-            "last_loss": float(last_loss),
-            "model_name": type(model).__name__,
-            "optimizer_name": type(self.optimizer).__name__,
-            "optimizer": self.optimizer.state_dict(),
-            "model": model.state_dict(),  # e2e
-            # per-part (mirror VANP idea with your module names)
+            "time":                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "epoch":                epoch,
+            "iteration":            iteration,
+            "best":                 float(best),
+            "last_loss":            float(last_loss),
+            "model_name":           type(model).__name__,
+            "optimizer_name":       type(self.optimizer).__name__,
+            "optimizer":            self.optimizer.state_dict(),
+            "model":                model.state_dict(),  
             "image_encoder":        model.image_encoder.state_dict(),
             "kp_encoder":           model.kp_encoder.state_dict(),
             "observation_encoder":  model.observation_encoder.state_dict(),
@@ -68,7 +67,7 @@ class Learner:
 
     def init_data(self):
         dataset = SocialNavDataset(
-            index_file=getattr(self.cfg.dataset, "index_file", self.cfg.dataset.get("root", "")),
+            sample_file=getattr(self.cfg.dataset, "sample_file", None),
             train=True,
             only_human_visable=getattr(self.cfg.dataset, "only_human_visable", True),
             only_nonlinear=getattr(self.cfg.dataset, "only_nonlinear", True),
@@ -76,26 +75,21 @@ class Learner:
             metric_waypoint_spacing=self.cfg.dataset.get("metric_waypoint_spacing", 1.0),
         )
 
-        ratio = float(self.cfg.train_params.get("sample_ratio", 1.0))
-        if ratio < 1.0:
-            total = len(dataset)
-            k = max(1, math.ceil(total * ratio))
-            sub_seed = self.cfg.train_params.get("sample_seed", None)
-            rng = np.random.RandomState(sub_seed) if sub_seed is not None else np.random
-            indices = rng.choice(total, size=k, replace=False)
-            dataset = Subset(dataset, indices)
+        print(f"Loaded {len(dataset)} samples")
 
         self.train_loader = DataLoader(
             dataset,
             batch_size=self.cfg.train_params.get("batch_size", 32),
             shuffle=True,
-            num_workers=self.cfg.train_params.get("num_workers", 0),
+            num_workers=self.cfg.train_params.get("num_workers", 10),
             pin_memory=True,
             drop_last=True,
+            prefetch_factor = 2, # 
         )
 
     def init_model(self):
-        self.model = PretextModel(self.cfg).to(self.device)
+        self.uncompiled_model = PretextModel(self.cfg).to(self.device)
+        self.model = torch.compile(PretextModel(self.cfg)).to(self.device)
 
     def init_loss(self):
         # Base loss (VICReg or Barlow) between z_obs and z_traj
@@ -147,31 +141,31 @@ class Learner:
         )
         wandb.watch(self.model, log="all", log_freq=100)
 
-    # -------------------- training -----------------
+    # # -------------------- training -----------------
     def move_batch_to_device(self, batch):
         out = {}
-        for k, v in batch.items():
-            if isinstance(v, list) and v and isinstance(v[0], torch.Tensor):
-                out[k] = torch.stack(v, dim=1).to(self.device, non_blocking=True)
-            elif isinstance(v, torch.Tensor):
-                out[k] = v.to(self.device, non_blocking=True)
-            else:
-                out[k] = v
+        out["past_frames"] = [x.to(self.device) for x in batch["past_frames"]]
+        # batch["past_frames"] = batch["past_frames"].to(device=self.device)
+        out["future_positions"] = batch["future_positions"].to(device=self.device)
+        # out["future_positions"] = future_positions.view(future_positions.shape[0], -1)
+        out["past_kp_2d"] = batch["past_kp_2d"].to(device=self.device)
+        out["future_kp_2d"] = batch["future_kp_2d"].to(device=self.device)
         return out
 
     def train_one_epoch(self, epoch_idx=0):
-        self.model.train()
         total_loss, num_batches = 0.0, 0
 
         pbar = tqdm(self.train_loader, desc=f"Train E{epoch_idx+1}", leave=False)
-        for step, batch in enumerate(pbar, start=1):
-            batch = self.move_batch_to_device(batch)
-
+        for data in pbar:
+            self.model.train()
+            
+            # move data to device
+            batch = self.move_batch_to_device(data)
             out = self.model(batch)
             z_obs  = out["z_obs"]
             z_traj = out["z_traj"]
 
-            loss = self.base_loss_fn(z_obs, z_traj, **self.loss_kwargs)
+            loss, (sim_loss, std_loss, cov_loss) = self.base_loss_fn(z_obs, z_traj, **self.loss_kwargs)
 
             if not torch.isfinite(loss):
                 print("[BAD] total loss NaN.", "debug dims:", z_obs.shape, z_traj.shape)
@@ -179,26 +173,6 @@ class Learner:
 
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
-
-            # gradient diagnostics AFTER backward
-            bad_grad = False
-            total_norm_sq = 0.0
-            for n, p in self.model.named_parameters():
-                if p.grad is None:
-                    continue
-                g = p.grad
-                if not torch.isfinite(g).all():
-                    print(f"[BAD] grad NaN/Inf at {n}"); bad_grad = True
-                total_norm_sq += g.norm().item() ** 2
-            if bad_grad:
-                raise FloatingPointError("gradient NaN/Inf")
-            total_norm = total_norm_sq ** 0.5
-
-            # clip AFTER backward, BEFORE step
-            clip = self.cfg.train_params.get("clip_grad_norm", 1.0)
-            if clip and clip > 0:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), clip)
-
             self.optimizer.step()
 
             total_loss += float(loss.item()); num_batches += 1
@@ -208,9 +182,9 @@ class Learner:
             if self.use_wandb:
                 wandb.log({
                     "train/loss_step": float(loss.item()),
-                    "train/grad_norm": float(total_norm),
-                    "train/z_obs_norm": float(z_obs.norm(p=2, dim=1).mean().item()),
-                    "train/z_traj_norm": float(z_traj.norm(p=2, dim=1).mean().item()),
+                    "train/sim_loss": float(sim_loss), # similarity
+                    "train/std_loss": float(std_loss), # invariance
+                    "train/cov_loss": float(cov_loss), # covariance
                     "train/lr": self.optimizer.param_groups[0]["lr"],
                     "train/epoch": epoch_idx + 1,
                 }, step=self.global_step)
@@ -233,44 +207,6 @@ class Learner:
         )
         os.makedirs(model_dir, exist_ok=True)
 
-        # ---------- RESUME ----------
-        ckpt_path = None
-        if resume:
-            if resume == "auto":
-                # pick the latest *.pth in model_dir
-                cands = [os.path.join(model_dir, f) for f in os.listdir(model_dir) if f.endswith(".pth")]
-                if cands:
-                    ckpt_path = max(cands, key=os.path.getmtime)
-            else:
-                ckpt_path = resume
-
-        if ckpt_path and os.path.isfile(ckpt_path):
-            print(f"[Resume] Loading checkpoint: {ckpt_path}")
-            state = load_checkpoint(ckpt_path, device=self.device)
-
-            # 1) model
-            self.model.load_state_dict(state["model"], strict=True)
-
-            # 2) optimizer
-            try:
-                self.optimizer.load_state_dict(state["optimizer"])
-            except Exception as e:
-                print(f"[Resume][Warn] Optimizer state load failed ({e}). Continuing with fresh optimizer.")
-
-            # 3) bookkeeping
-            best_loss = float(state.get("best", best_loss))
-            self.global_step = int(state.get("iteration", 0))
-            # saved 'epoch' was the one just finished; continue from that
-            start_epoch = int(state.get("epoch", 0))
-
-            print(f"[Resume] epoch={start_epoch}, best_loss={best_loss:.4f}, global_step={self.global_step}")
-
-            # (optional) override LR/WD from current config after loading optimizer
-            new_lr = self.cfg.train_params.get("lr", None)
-            if new_lr is not None:
-                for g in self.optimizer.param_groups:
-                    g["lr"] = new_lr
-
         for epoch in range(epochs):
             avg_loss = self.train_one_epoch(epoch_idx=epoch)
             print(f"Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}")
@@ -287,13 +223,13 @@ class Learner:
                 tag = "best" if is_best else f"e{epoch+1}"
                 name = f"{self.cfg.logger.pretext.experiment_name}_{timestamp}"
 
-                state = self._build_pretext_checkpoint(
+                checkpoint = self._build_pretext_checkpoint(
                     epoch=epoch+1,
                     iteration=self.global_step,
                     best=best_loss,
                     last_loss=avg_loss,
                 )
-                ckpt_path = save_checkpoint(state, is_best, model_dir, name)   # writes {name}.pth (+ -best.pth if best)
+                ckpt_path = save_checkpoint(checkpoint, is_best, model_dir, name)   # writes {name}.pth (+ -best.pth if best)
                 print(f"[Checkpoint] Saved to {ckpt_path}")
 
                 if self.use_wandb and os.path.isfile(ckpt_path):
@@ -308,7 +244,6 @@ class Learner:
 
         if self.run is not None:
             self.run.finish()
-
 
 # ---------- Entry ----------
 if __name__ == "__main__":

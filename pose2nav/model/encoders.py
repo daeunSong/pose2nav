@@ -111,16 +111,19 @@ class TrajectoryEncoder(nn.Module):
     Encodes a 2D sequence [B, T, 2] into a vector [B, output_dim].
     Uses a GRU for better temporal summarization.
     """
-    def __init__(self, input_dim: int = 2, output_dim: int = 256, hidden: int = 256, num_layers: int = 1):
+    def __init__(self, input_dim: int = 2, T_pred = 12, output_dim: int = 256):
         super().__init__()
-        self.gru = nn.GRU(input_size=input_dim, hidden_size=hidden, num_layers=num_layers,
-                          batch_first=True, bidirectional=False)
-        self.proj = nn.Sequential(nn.LayerNorm(hidden), nn.Linear(hidden, output_dim), nn.LayerNorm(output_dim))
+        action_encoder_output_size = input_dim * T_pred
+        feature_size = output_dim
+        self.encoder = nn.Sequential(
+            nn.Linear(action_encoder_output_size, feature_size),
+            nn.LeakyReLU()
+        )
 
     def forward(self, traj: torch.Tensor) -> torch.Tensor:  # traj: [B, T, 2]
-        _, h = self.gru(traj)            # h: [num_layers, B, hidden]
-        h = h[-1]                        # [B, hidden]
-        return self.proj(h)              # [B, output_dim]
+        B, T, D = traj.shape
+        flat = traj.reshape(B, T * D)        # [B, T*2]
+        return self.encoder(flat)            # [B, output_dim]
 
 # ---------- Keypoint Encoder (2D) ----------
 class KeypointEncoder2D(nn.Module):
