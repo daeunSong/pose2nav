@@ -35,7 +35,7 @@ class Learner:
         self.init_optimizer()
         self.init_logger()  # W&B init
 
-    def _build_pretext_checkpoint(self, epoch:int, iteration:int, best:float, last_loss:float):
+    def _build_checkpoint(self, epoch:int, iteration:int, best:float, last_loss:float):
         model = self.uncompiled_model
         ckpt = {
             "time":                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -120,9 +120,9 @@ class Learner:
             self.run = None
             return
         project = getattr(self.cfg.logger.pretext, "project", "pretext")
-        entity = getattr(self.cfg.logger.pretext, "entity", None)
-        mode = getattr(self.cfg.logger.pretext, "mode", "online")  # "online"|"offline"|"disabled"
-        exp = getattr(self.cfg.logger.pretext, "experiment_name", "exp")
+        entity  = getattr(self.cfg.logger.pretext, "entity", None)
+        mode    = getattr(self.cfg.logger.pretext, "mode", "online")  # "online"|"offline"|"disabled"
+        exp     = getattr(self.cfg.logger.pretext, "experiment_name", "exp2")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_name = f"{exp}_{timestamp}"
 
@@ -147,7 +147,7 @@ class Learner:
         out["future_kp_2d"] = batch["future_kp_2d"].to(device=self.device)
         return out
 
-    def train_one_epoch(self, epoch_idx=0):
+    def train_one_epoch(self, epoch_idx: int = 0):
         total_loss, num_batches = 0.0, 0
 
         pbar = tqdm(self.train_loader, desc=f"Train E{epoch_idx+1}", leave=False)
@@ -195,7 +195,6 @@ class Learner:
         save_best = int(self.cfg.train_params.get("save_best", 150))
         best_loss = float("inf")
 
-        # Resolve save dir from config (fallbacks)
         model_dir = (
             getattr(self.cfg.directory, "pretext_model_dir", None)
             or "checkpoints/pretext"
@@ -218,7 +217,7 @@ class Learner:
                 tag = "best" if is_best else f"e{epoch+1}"
                 name = f"{self.cfg.logger.pretext.experiment_name}_{timestamp}"
 
-                checkpoint = self._build_pretext_checkpoint(
+                checkpoint = self._build_checkpoint(
                     epoch=epoch+1,
                     iteration=self.global_step,
                     best=best_loss,

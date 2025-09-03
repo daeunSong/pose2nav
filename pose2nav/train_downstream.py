@@ -20,14 +20,14 @@ from utils.nn import save_checkpoint, load_checkpoint
 
 
 class LearnerDownstream:
-    def __init__(self, cfg_path: str, use_wandb: bool = True, pretext_ckpt: Optional[str] = None):
+    def __init__(self, cfg_path: str, use_wandb: bool = True):
         self.cfg = get_conf(cfg_path)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.use_wandb = use_wandb
 
-        # prefer CLI arg; otherwise read from YAML: directory.pretext_ckpt
-        yaml_ckpt = getattr(getattr(self.cfg, "directory", {}), "pretext_ckpt", None)
-        self.pretext_ckpt = pretext_ckpt or yaml_ckpt
+        self.ckpt_path = self.cfg.directory.pretext_ckpt
+
+        self.global_step = 0
 
         self.set_seed(self.cfg.train_params.seed)
         self.init_data()
@@ -35,6 +35,22 @@ class LearnerDownstream:
         self.init_optimizer()   # head-only optimizer (backbone frozen)
         self.init_logger()
 
+    def _build_checkpoint(self, epoch:int, iteration:int, best:float, last_loss:float):
+        model = self.uncompiled_model
+        ckpt = {
+            "time":             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "epoch":            epoch,
+            "iteration":        iteration,
+            "best":             float(best),
+            "last_loss":        float(last_loss),
+            "model_name":       type(model).__name__,
+            "optimizer_name":   type(self.optimizer).__name__,
+            "optimizer":        self.optimizer.state_dict(),
+            "model":            model.state_dict(),  
+            "backbone":         model.backbone.state_dict(),  # frozen pretext backbone
+            "head":             model.head.state_dict(),          # prediction head
+        }
+        return ckpt
     # -------------------- setup --------------------
     def set_seed(self, seed: int):
         torch.manual_seed(seed)
@@ -44,38 +60,12 @@ class LearnerDownstream:
             torch.cuda.manual_seed_all(seed)
 
     def init_data(self):
-        dataset = SocialNavDataset(
-            index_file=getattr(self.cfg.dataset, "index_file", self.cfg.dataset.get("root", "")),
-            train=True,
-            only_human_visable=getattr(self.cfg.dataset, "only_human_visable", True),
-            only_nonlinear=getattr(self.cfg.dataset, "only_nonlinear", True),
-            resize=tuple(self.cfg.dataset.get("resize", [224, 224])),  # keep 224x224 for ViT/DINO
-            metric_waypoint_spacing=self.cfg.dataset.get("metric_waypoint_spacing", 1.0),
-        )
-
-        ratio = float(self.cfg.train_params.get("sample_ratio", 1.0))
-        if ratio < 1.0:
-            total = len(dataset)
-            k = max(1, math.ceil(total * ratio))
-            sub_seed = self.cfg.train_params.get("sample_seed", None)
-            rng = np.random.RandomState(sub_seed) if sub_seed is not None else np.random
-            indices = rng.choice(total, size=k, replace=False)
-            dataset = Subset(dataset, indices)
-
-        nw = self.cfg.train_params.get("num_workers", 0)
-        self.train_loader = DataLoader(
-            dataset,
-            batch_size=self.cfg.train_params.get("batch_size", 32),
-            shuffle=True,
-            num_workers=nw,
-            pin_memory=True,
-            drop_last=True,
-            persistent_workers=bool(nw > 0),
-            prefetch_factor=self.cfg.train_params.get("prefetch_factor", 2) if nw > 0 else None,
-        )
+        dataset = SocialNavDataset(**self.cfg.dataset)
+        self.train_loader = DataLoader(dataset, **self.cfg.dataloader)
 
     def init_model(self):
-        self.model = DownstreamTrajPredictor(self.cfg).to(self.device)
+        self.uncompiled_model = DownstreamTrajPredictor(self.cfg).to(self.device)
+        self.model = torch.compile(DownstreamTrajPredictor(self.cfg)).to(self.device)
         self._load_backbone_from_pretext()  # robust loader for your rich pretext ckpt
 
         # Freeze the backbone (decoder-only training)
@@ -85,11 +75,11 @@ class LearnerDownstream:
 
     # ---------- single-checkpoint backbone loader ----------
     def _load_backbone_from_pretext(self):
-        if not self.pretext_ckpt:
+        if not self.ckpt_path:
             print("[Load] No pretext_ckpt provided (skipping).")
             return
 
-        ckpt_path = os.path.expanduser(self.pretext_ckpt)
+        ckpt_path = self.ckpt_path
         if not os.path.isfile(ckpt_path):
             print(f"[WARN] pretext ckpt not found: {ckpt_path}")
             return
@@ -180,10 +170,10 @@ class LearnerDownstream:
         if not self.use_wandb:
             self.run = None
             return
-        project = getattr(self.cfg.logger, "downstream", "project", "downstream")
-        entity  = getattr(self.cfg.logger, "downstream", "entity", None)
-        mode    = getattr(self.cfg.logger, "downstream", "mode", "online")
-        exp     = getattr(self.cfg.logger, "downstream", "experiment_name", "downstream_exp")
+        project = getattr(self.cfg.logger.downstream, "project", "downstream")
+        entity  = getattr(self.cfg.logger.downstream, "entity", None)
+        mode    = getattr(self.cfg.logger.downstream, "mode", "online")
+        exp     = getattr(self.cfg.logger.downstream, "experiment_name", "exp2")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_name = f"{exp}_{timestamp}"
 
@@ -193,59 +183,32 @@ class LearnerDownstream:
             name=run_name,
             mode=mode,
             config=self._cfg_to_dict(self.cfg),
-            tags=getattr(self.cfg.logger, "downstream", "tags", None),
+            tags=getattr(self.cfg.logger.downstream, "tags", None),
         )
         wandb.watch(self.model, log="all", log_freq=200)
 
-    # -------------------- utils --------------------
+    # # -------------------- training -----------------
     def move_batch_to_device(self, batch: Dict[str, Any]):
         out = {}
-        for k, v in batch.items():
-            if isinstance(v, list) and v and isinstance(v[0], torch.Tensor):
-                out[k] = torch.stack(v, dim=1).to(self.device, non_blocking=True)
-            elif isinstance(v, torch.Tensor):
-                out[k] = v.to(self.device, non_blocking=True)
-            else:
-                out[k] = v
+        out["past_frames"] = [x.to(self.device) for x in batch["past_frames"]]
+        out["future_positions"] = batch["future_positions"].to(device=self.device)
+        out["past_kp_2d"] = batch["past_kp_2d"].to(device=self.device)
+        out["goal"] = out["future_positions"][:, -1, :] # [B, 2]
         return out
 
-    # -------------------- 1 epoch --------------------
     def train_one_epoch(self, epoch_idx: int = 0):
         total_loss, num_batches = 0.0, 0
         total_ade, total_fde = 0.0, 0.0
 
         pbar = tqdm(self.train_loader, desc=f"Downstream E{epoch_idx+1}", leave=False)
-        for step, batch in enumerate(pbar, start=1):
-            batch = self.move_batch_to_device(batch)
+        for data in pbar:   # batch
+            self.model.train()
 
-            # 1) Truncate target to T_pred
-            T_pred = int(self.cfg.model.input.T_pred)
-            future = batch["future_positions"].float()          # [B, T_gt, 2]
-            T_gt   = future.size(1)
-            T_use  = min(T_pred, T_gt)
-            target = future[:, :T_use, :]
+            # move data to device
+            batch = self.move_batch_to_device(data)
+            target = batch["future_positions"].float()  # target future positions
+            pred = self.model(batch)                            # [B, T_pred, 2]
 
-            # quick sanity: catch all-zero targets (dataset issue)
-            if torch.allclose(target, torch.zeros_like(target)):
-                print("[WARN] target is all zeros this step")
-
-            # 2) Derive goal from the truncated horizon
-            batch = dict(batch)
-            batch["goal"] = target[:, -1, :].contiguous()       # [B, 2]
-
-            # 3) Forward (decoder-only training; backbone frozen)
-            inputs = {
-                "past_frames":  batch["past_frames"],
-                "past_kp_2d":   batch["past_kp_2d"],
-                "goal":         batch["goal"],
-            }
-            pred = self.model(inputs)                            # [B, T_pred, 2]
-
-            # 4) Align horizon
-            if pred.size(1) != T_use:
-                pred = pred[:, :T_use, :]
-
-            # 5) Loss
             loss = F.mse_loss(pred, target)
 
             if not torch.isfinite(loss):
@@ -253,27 +216,8 @@ class LearnerDownstream:
 
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
-
-            # grad diagnostics + clipping
-            bad_grad = False
-            total_norm_sq = 0.0
-            for n, p in self.model.named_parameters():
-                if p.grad is None: continue
-                g = p.grad
-                if not torch.isfinite(g).all():
-                    print(f"[BAD] grad NaN/Inf at {n}"); bad_grad = True
-                total_norm_sq += g.norm().item() ** 2
-            if bad_grad:
-                raise FloatingPointError("gradient NaN/Inf")
-            total_norm = total_norm_sq ** 0.5
-
-            clip = float(self.cfg.train_params.get("clip_grad_norm", 1.0))
-            if clip and clip > 0:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), clip)
-
             self.optimizer.step()
 
-            bsz = pred.size(0)
             with torch.no_grad():
                 ade = (pred - target).norm(dim=-1).mean()             # mean over (B,T)
                 fde = (pred[:, -1] - target[:, -1]).norm(dim=-1).mean()
@@ -290,15 +234,12 @@ class LearnerDownstream:
                     "downstream/loss_step": float(loss.item()),
                     "downstream/ade_step": float(ade.item()),
                     "downstream/fde_step": float(fde.item()),
-                    "downstream/grad_norm": float(total_norm),
                     "downstream/lr_head": float(self.optimizer.param_groups[0]["lr"]),
-                    "downstream/epoch": epoch_idx + 1,
-                    "downstream/step": step,
-                })
+                }, step=self.global_step)
 
-        avg_loss = total_loss / num_batches
+            self.global_step += 1
 
-        return avg_loss
+        return total_loss / max(1, num_batches)
 
 
     # -------------------- train (single stage: head only) --------------------
@@ -306,55 +247,46 @@ class LearnerDownstream:
         print(f"Using device: {self.device}")
 
         epochs = int(self.cfg.train_params.get("epochs", 20))
-        save_every   = int(self.cfg.train_params.get("save_every", 5))
+        save_every   = int(self.cfg.train_params.get("save_every", 50))
+        save_best = int(self.cfg.train_params.get("save_best", 150))
         best_loss = float("inf")
 
         model_dir = (
-            getattr(self.cfg.directory, "model_dir", None)
+            getattr(self.cfg.directory, "downstream_model_dir", None)
             or "checkpoints/downstream"
         )
         os.makedirs(model_dir, exist_ok=True)
 
         for epoch in range(epochs):
-            loss = self.train_one_epoch(epoch_idx=epoch)
-            print(f"Epoch {epoch+1}/{epochs} - Loss: {loss:.4f}")
+            avg_loss = self.train_one_epoch(epoch_idx=epoch)
+            print(f"Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}")
 
             if self.use_wandb:
-                wandb.log({"downstream/loss_epoch": float(loss),
-                           "downstream/epoch": epoch + 1})
+                wandb.log({"downstream/loss_epoch": float(avg_loss)})
 
-            is_best = loss < best_loss
+            is_best = avg_loss < best_loss
             if is_best:
-                best_loss = loss
+                best_loss = avg_loss
 
-            if is_best or ((epoch + 1) % save_every == 0):
+            if (epoch + 1) % save_every == 0 or (is_best and (epoch + 1) >= save_best):
                 timestamp  = datetime.now().strftime("%Y%m%d")
                 tag = "best" if is_best else f"e{epoch+1}"
-                name = f"{self.cfg.logger.experiment_name}_{timestamp}"
+                name = f"{self.cfg.logger.downstream.experiment_name}_{timestamp}"
 
-                # rich downstream checkpoint
-                state = {
-                    "time": timestamp,
-                    "epoch": epoch + 1,
-                    "best": float(best_loss),
-                    "last_loss": float(loss),
-                    "model_name": type(self.model).__name__,
-                    "optimizer_name": type(self.optimizer).__name__,
-                    "cfg": self._cfg_to_dict(self.cfg),
-                    "model": self.model.state_dict(),              # full downstream model
-                    "backbone": self.model.backbone.state_dict(),  # frozen pretext backbone
-                    "head": self.model.head.state_dict(),          # prediction head
-                    "optimizer": self.optimizer.state_dict(),
-                }
-
-                ckpt_path = save_checkpoint(state, is_best, model_dir, name)  # writes {name}.pth (+ -best.pth if best)
+                checkpoint = self._build_checkpoint(
+                    epoch=epoch+1,
+                    iteration=self.global_step,
+                    best=best_loss,
+                    last_loss=avg_loss,
+                )
+                ckpt_path = save_checkpoint(checkpoint, is_best, model_dir, name, epoch+1)  # writes {name}.pth (+ -best.pth if best)
                 print(f"[Checkpoint] Saved to {ckpt_path}")
 
                 if self.use_wandb and os.path.isfile(ckpt_path):
                     artifact = wandb.Artifact(
-                        name=f"{self.cfg.logger.experiment_name}_{tag}",
+                        name=f"{self.cfg.logger.downstream.experiment_name}_{tag}",
                         type="model",
-                        metadata={"epoch": epoch + 1, "loss": float(loss), "saved_at": timestamp},
+                        metadata={"epoch": epoch + 1, "loss": float(avg_loss), "saved_at": timestamp},
                     )
                     artifact.add_file(ckpt_path)
                     wandb.log_artifact(artifact)
@@ -373,7 +305,7 @@ if __name__ == "__main__":
     parser.add_argument("--no_wandb", action="store_true", help="Disable Weights & Biases logging")
     args = parser.parse_args()
 
-    learner = LearnerDownstream(args.cfg, use_wandb=not args.no_wandb, pretext_ckpt=args.pretext_ckpt)
+    learner = LearnerDownstream(args.cfg, use_wandb=not args.no_wandb)
     learner.train()
 
 # Usage:

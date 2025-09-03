@@ -1,11 +1,11 @@
 dataset:
   sample_file: "data/train/samples.pkl"
+  train: true
   only_human_visable: true
   only_nonlinear: true
   resize: [224, 224] #[192, 192]  # decrease
   metric_waypoint_spacing: 1.0
 
-# Dataloader parameters
 dataloader:
   num_workers: 16  # increase #######
   batch_size: 32   # increase #######
@@ -63,16 +63,16 @@ loss_params:
     # eps: 1e-4
     
 directory:
-  pretext_model_dir: /home/songd/research/pose2nav/checkpoint/downstream/   
-  downstream_model_dir: /home/songd/research/pose2nav/checkpoint/downstream/   
-  pretext_ckpt: s${directory.pretext_model_dir}/s${logger.pretext.experiment_name}_best
+  pretext_model_dir: /home/songd/research/pose2nav/checkpoint/pretext
+  downstream_model_dir: /home/songd/research/pose2nav/checkpoint/downstream 
+  pretext_ckpt: ${directory.pretext_model_dir}/${logger.pretext.project}_vicreg_d${model.d}_exp2_20250903_best.pth
 
 logger:
   pretext:
     project: socialnav_pretext
     entity: daeun-song-george-mason-university
     mode: online
-    experiment_name: s${logger.pretext.project}_d${model.d}_exp2
+    experiment_name: ${logger.pretext.project}_d${model.d}_exp2
 
   downstream:
     project: socialnav_downstream
