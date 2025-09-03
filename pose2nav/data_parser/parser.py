@@ -18,17 +18,6 @@ from collections import defaultdict
 from skeleton.predict import PoseEstimatorNode
 import cv2
 
-
-def append_pickle(file_path, new_data):
-    """Append new_data (list) to a pickle file containing a list."""
-    if os.path.exists(file_path):
-        with open(file_path, "rb") as f:
-            data = pickle.load(f)
-    else:
-        data = []
-    data.extend(new_data)
-    with open(file_path, "wb") as f:
-        pickle.dump(data, f)
         
 def create_samples(input_path, obs_window: int = 6, pred_window: int = 8,
                    linear_threshold: int = 0.03, num_ped: int = 6,
@@ -62,7 +51,7 @@ def create_samples(input_path, obs_window: int = 6, pred_window: int = 8,
     past_frames, goal_frames = [], []   # [T, 1]
     non_linears = []
 
-    # NEW: store only one path per sample (the last observed frame)
+    # Store the last observed frame
     last_past_frame_path = []
 
     # Lists to store keypoints

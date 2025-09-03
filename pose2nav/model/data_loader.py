@@ -102,48 +102,25 @@ class SocialNavDataset(Dataset):
         self._apply_mask_inplace(keep)
         print(f"nonlinear: {sum(nonlin_mask)}, humans: {sum(humans_mask)}, both: {sum(keep)}")
 
-        def _apply_mask_inplace(self, keep_mask: np.ndarray):
-            """keep_mask: bool array of shape [N]; applies to ALL per-sample lists."""
-            keep_mask = np.asarray(keep_mask, dtype=bool).reshape(-1)
-            N = len(self.data["past_positions"])
-            assert keep_mask.size == N, f"Mask len {keep_mask.size} != data len {N}"
+    def _apply_mask_inplace(self, keep_mask: np.ndarray):
+        """keep_mask: bool array of shape [N]; applies to ALL per-sample lists."""
+        keep_mask = np.asarray(keep_mask, dtype=bool).reshape(-1)
+        N = len(self.data["past_positions"])
+        assert keep_mask.size == N, f"Mask len {keep_mask.size} != data len {N}"
 
-            idx = np.flatnonzero(keep_mask)
-            assert idx.size > 0, "[DATA][ERR] Mask removed all samples."
+        idx = np.flatnonzero(keep_mask)
+        assert idx.size > 0, "[DATA][ERR] Mask removed all samples."
 
-            # sanity: all keys share same length before masking
-            for k, v in self.data.items():
-                if len(v) != N:
-                    raise ValueError(f"Length mismatch before masking: key={k} len={len(v)} vs {N}")
+        # sanity: all keys share same length before masking
+        for k, v in self.data.items():
+            if len(v) != N:
+                raise ValueError(f"Length mismatch before masking: key={k} len={len(v)} vs {N}")
 
-            # apply same indices to every key (preserves types)
-            for k, v in list(self.data.items()):
-                self.data[k] = [v[i] for i in idx]
+        # apply same indices to every key (preserves types)
+        for k, v in list(self.data.items()):
+            self.data[k] = [v[i] for i in idx]
 
-            print(f"[DATA] kept {idx.size}/{keep_mask.size} samples after filtering.")
-
-        # if self.only_nonlinear:
-        #     # select non_linear trajectories
-        #     print(self.data["non_linear"])
-        #     non_linear_trajs = np.nonzero(self.data["non_linear"])
-        #     print(non_linear_trajs)
-
-        #     non_linear_trajs = np.nonzero(self.data["has_humans"])
-            # self.data["past_positions"] = np.array(self.data["past_positions"])[non_linear_trajs]
-            # self.data["future_positions"] = np.array(self.data["future_positions"])[non_linear_trajs]
-            # self.data["past_yaw"] = np.array(self.data["past_yaw"])[non_linear_trajs]
-            # self.data["future_yaw"] = np.array(self.data["future_yaw"])[non_linear_trajs]
-            # self.data["past_vw"] = np.array(self.data["past_vw"])[non_linear_trajs]
-            # self.data["future_vw"] = np.array(self.data["future_vw"])[non_linear_trajs]
-            # self.data["past_frames"] = np.array(self.data["past_frames"])[non_linear_trajs]
-            # self.data["future_frames"] = np.array(self.data["future_frames"])[non_linear_trajs]
-            # self.data["past_kp_3d"] = np.array(self.data["past_kp_3d"])[non_linear_trajs]
-            # self.data["future_kp_3d"] = np.array(self.data["future_kp_3d"])[non_linear_trajs]
-            # self.data["past_kp_2d"] = np.array(self.data["past_kp_2d"])[non_linear_trajs]
-            # self.data["future_kp_2d"] = np.array(self.data["future_kp_2d"])[non_linear_trajs]
-            # self.data["past_root_3d"] = np.array(self.data["past_root_3d"])[non_linear_trajs]
-            # self.data["future_root_3d"] = np.array(self.data["future_root_3d"])[non_linear_trajs]
-            # self.data["last_past_frame_path"] = np.array(self.data["last_past_frame_path"])[non_linear_trajs]
+        print(f"[DATA] kept {idx.size}/{keep_mask.size} samples after filtering.")
 
     def _apply_mask_inplace(self, keep_mask):
         # normalize mask → 1D bool of length N
