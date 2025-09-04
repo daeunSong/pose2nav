@@ -222,8 +222,8 @@ class RootPointEncoder3D(nn.Module):
         B = root_3d.shape[0]
         return self.mlp(root_3d.reshape(B, -1))  # [B, output_dim]
 
-# ---------- Goal Position Encoder (kept for compatibility) ----------
-class GoalPositionEncoder(nn.Module):
+# ---------- Goal Encoder (kept for compatibility) ----------
+class GoalEncoder(nn.Module):
     """Encodes goal position [B, 2] into [B, output_dim]."""
     def __init__(self, input_dim: int = 2, output_dim: int = 256):
         super().__init__()

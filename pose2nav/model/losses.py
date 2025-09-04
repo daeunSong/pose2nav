@@ -10,37 +10,6 @@ def off_diagonal(x):
 
 # ---------- VICReg ----------
 
-# def vicreg_loss(z1: torch.Tensor, z2: torch.Tensor, sim_w: float = 25.0, var_w: float = 25.0, cov_w: float = 1.0, eps: float = 1e-4) -> torch.Tensor:
-#     """
-#     z1, z2: [B, D] (any dtype) -- internally cast to float32
-#     """
-#     z1 = z1.float()
-#     z2 = z2.float()
-
-#     # Invariance term (MSE)
-#     inv = ((z1 - z2) ** 2).mean()
-
-#     # Variance term (promote per-dim std >= 1)
-#     def variance(z):
-#         z = z - z.mean(dim=0, keepdim=True)
-#         std = torch.sqrt(z.var(dim=0, unbiased=False) + eps)
-#         return torch.relu(1.0 - std).mean()
-
-#     v = variance(z1) + variance(z2)
-
-#     # Covariance term (decorrelate features)
-#     def covariance(z):
-#         z = z - z.mean(dim=0, keepdim=True)
-#         n = z.size(0)
-#         if n <= 1:
-#             return z.new_tensor(0.0)
-#         c = (z.T @ z) / (n - 1)  # [D, D]
-#         off = c - torch.diag(torch.diag(c))
-#         return (off ** 2).sum() / z.size(1)
-
-#     c = covariance(z1) + covariance(z2)
-#     return sim_w * inv + var_w * v + cov_w * c
-
 def vicreg_loss(
     z1, z2, sim_coef: float = 25.0, std_coef: float = 25.0, cov_coef: float = 5.0
 ):
@@ -71,3 +40,14 @@ def get_loss_fn(name: str):
     if name == "vicreg":
         return vicreg_loss
     raise ValueError(f"Unsupported loss: {name}")
+
+
+# ---------- EndToEnd ----------
+
+# class EndToEndLoss(nn.Module):
+#     def __init__(self, temp_loss_lambda: int = 0.3):
+#         super().__init__()
+#         self.temp_loss_lambda = temp_loss_lambda
+
+#     def forward(self, x_gt, x, dt_gt, dt):
+#         loss = torch.nn.functional.mse_loss(x, x_gt)    # (B, T, L)

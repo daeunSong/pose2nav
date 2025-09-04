@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from model.encoders import (
     ImageEncoder,
@@ -9,6 +9,7 @@ from model.encoders import (
     KeypointEncoder2D,
     # RootPointEncoder2D,   # REMOVED
 )
+# from model.attention import HumanCrossAttPool
 
 class PretextModel(nn.Module):
     """
@@ -59,6 +60,7 @@ class PretextModel(nn.Module):
         # === Per-human pooling across humans per frame (linear-softmax on keypoint embeddings only) ===
         self.human_pool_w   = nn.Parameter(torch.randn(d))
         self.human_pool_temp = getattr(cfg.model, "human_pool_temp", 1.0)
+        # self.human_pool = HumanCrossAttPool(d_model=d, n_heads=4, dropout=0.1)
 
         # --- CLS + learned positional table
         self.cls_token = nn.Parameter(torch.randn(1, 1, d))
@@ -87,7 +89,7 @@ class PretextModel(nn.Module):
         prj_d_out = int(pc.d_out)
         prj_hidden_w = int(pc.hidden)
 
-        def projector(d_in: int, d_hidden=2048, d_out=128) -> nn.Sequential:
+        def projector(d_in: int, d_hidden=1024, d_out=2048) -> nn.Sequential:
             return nn.Sequential(
                 nn.Linear(d_in, d_hidden, bias=False),
                 nn.BatchNorm1d(d_hidden, eps=1e-5, affine=True),
@@ -110,7 +112,7 @@ class PretextModel(nn.Module):
         if use_future and (future_positions is not None):
             future_positions = future_positions.float()
             z_traj_raw = self.future_traj_encoder(future_positions)  # [B,d]
-            z_traj = self.proj_future(z_traj_raw)                    # [B,d]
+            z_traj = self.proj_future(z_traj_raw)                    # [B,d_out]
 
         # ---- Ensure frames tensor shape
         if isinstance(past_frames, list):
@@ -140,6 +142,12 @@ class PretextModel(nn.Module):
         X_hum  = F.layer_norm(X_hum, (d,))               # stabilize
 
         # =========================
+        # 2) Cross-attention Pooling (Human Scene Transformer)
+        # =========================
+        # hum_feats = self.human_pool(X_pose_tn)          # kp_feats: [B,T,N,d] (zeros padded)
+        # obs_tokens = torch.stack([img_feats, hum_feats], dim=2).reshape(B, 2*T, d)
+
+        # =========================
         # 3) Tokens + learned positional embeddings
         # =========================
         body_tokens = torch.stack([X_img, X_hum], dim=2).reshape(B, 2 * T, d)         # [B,2T,d]
@@ -153,15 +161,10 @@ class PretextModel(nn.Module):
         U = self.observation_encoder(S)   # [B,1+2T,d]
         U = self.final_ln(U)
         h_cls = U[:, 0, :]                # CLS
-        z_obs = self.proj_obs(h_cls)      # [B,d]
+        z_obs = self.proj_obs(h_cls)      # [B,d_out]
 
         return {
+            "h_cls": h_cls,
             "z_obs": z_obs,
             "z_traj": z_traj,
-            # Intermediates
-            "X_img": X_img,                 # [B,T,d]
-            "X_pose_tn": X_pose_tn,         # [B,T,N,d]
-            "hum_alpha": alpha.squeeze(-1), # [B,T,N]
-            "X_hum": X_hum,                 # [B,T,d]
-            "tokens": S,                     # [B,1+2T,d] (with pos added)
         }

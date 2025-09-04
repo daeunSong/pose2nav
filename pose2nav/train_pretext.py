@@ -96,16 +96,7 @@ class Learner:
             self.loss_kwargs = dict(lp[self.cfg.train_params.loss.lower()])
 
     def init_optimizer(self):
-        lr = self.cfg.train_params.get("lr", 5e-4)
-        wd = self.cfg.train_params.get("weight_decay", 0.03)
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=wd)
-        self._check_opt_params()
-
-    def _check_opt_params(self):
-        opt_params = {id(p) for g in self.optimizer.param_groups for p in g['params']}
-        missing = [n for n, p in self.model.named_parameters() if p.requires_grad and id(p) not in opt_params]
-        if missing:
-            print("[WARN] Params missing from optimizer:", missing)
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), **self.cfg.optimizer.adamw)
 
     # -------------------- W&B ----------------------
     def _cfg_to_dict(self, cfg):

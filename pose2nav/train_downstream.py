@@ -66,97 +66,25 @@ class LearnerDownstream:
     def init_model(self):
         self.uncompiled_model = DownstreamTrajPredictor(self.cfg).to(self.device)
         self.model = torch.compile(DownstreamTrajPredictor(self.cfg)).to(self.device)
-        self._load_backbone_from_pretext()  # robust loader for your rich pretext ckpt
 
-        # Freeze the backbone (decoder-only training)
+        ckpt = load_checkpoint(self.ckpt_path, self.device)
+        state = ckpt.get("model", ckpt)
+        # strip 'module.' if present
+        state = {k.replace("module.", ""): v for k,v in state.items()}
+        # drop projector weights (pretext-only)
+        state = {k: v for k, v in state.items() if not k.startswith(("proj_obs", "proj_future"))}
+
+        self.model.backbone.load_state_dict(state, strict=False)
+        print(f"[✓] Loaded backbone: {self.ckpt_path}")
+
+        # Freeze the backbone 
         self.model.freeze_backbone()
         for p in self.model.backbone.parameters():
             p.requires_grad = False
 
-    # ---------- single-checkpoint backbone loader ----------
-    def _load_backbone_from_pretext(self):
-        if not self.ckpt_path:
-            print("[Load] No pretext_ckpt provided (skipping).")
-            return
-
-        ckpt_path = self.ckpt_path
-        if not os.path.isfile(ckpt_path):
-            print(f"[WARN] pretext ckpt not found: {ckpt_path}")
-            return
-
-        raw = load_checkpoint(ckpt_path, self.device)
-
-        if not isinstance(raw, dict):
-            print("[Load] Unexpected checkpoint format.")
-            return
-
-        # ---- Prefer the full model state_dict you saved ----
-        sd = None
-        if "model" in raw and isinstance(raw["model"], dict):
-            sd = raw["model"]
-
-        # ---- Fallback: assemble from per-module dicts if present ----
-        if sd is None:
-            assembled = {}
-            for prefix in (
-                "image_encoder",
-                "kp_encoder",
-                "observation_encoder",
-                "proj_obs",
-                "proj_future",
-                "final_ln",
-                "future_traj_encoder",
-            ):
-                sub = raw.get(prefix, None)
-                if isinstance(sub, dict):
-                    for k, v in sub.items():
-                        assembled[f"{prefix}.{k}"] = v
-            sd = assembled if assembled else None
-
-        # ---- Last-resort legacy key ----
-        if sd is None and "state_dict" in raw and isinstance(raw["state_dict"], dict):
-            sd = raw["state_dict"]
-
-        if sd is None:
-            print("[Load] No recognizable state_dict found in checkpoint.")
-            return
-
-        # Strip "module." if present
-        if any(k.startswith("module.") for k in sd):
-            sd = {k[7:]: v for k, v in sd.items()}
-
-        # Filter to matching names & shapes for our downstream backbone (PretextModel)
-        msd = self.model.backbone.state_dict()
-        filtered = {k: v for k, v in sd.items() if k in msd and v.shape == msd[k].shape}
-
-        ret = self.model.backbone.load_state_dict(filtered, strict=False)
-        num_loaded = len(filtered)
-        print(f"[Load] Pretext checkpoint: {ckpt_path}")
-        print(f"  backbone tensors loaded: {num_loaded}/{len(msd)}")
-
-        miss = getattr(ret, "missing_keys", [])
-        unex = getattr(ret, "unexpected_keys", [])
-        if miss: print("  missing keys:", len(miss), " e.g.", miss[:8])
-        if unex: print("  unexpected keys:", len(unex), " e.g.", unex[:8])
-
-        if num_loaded < 0.8 * len(msd):
-            print("[WARN] <80% of backbone weights loaded — check that checkpoint matches PretextModel config.")
 
     def init_optimizer(self):
-        head_lr = float(getattr(self.cfg.train_params, "head_lr", 5e-4))
-        wd      = float(self.cfg.train_params.get("weight_decay", 1e-5))
-
-        # --- Head-only optimizer ---
-        params = [p for p in self.model.head.parameters() if p.requires_grad]
-        self.optimizer = torch.optim.AdamW(params, lr=head_lr, weight_decay=wd)
-
-        self._check_opt_params()
-
-    def _check_opt_params(self):
-        opt_params = {id(p) for g in self.optimizer.param_groups for p in g["params"]}
-        missing = [n for n, p in self.model.named_parameters() if p.requires_grad and id(p) not in opt_params]
-        if missing:
-            print("[WARN] Params missing from optimizer:", missing)
+        self.optimizer = torch.optim.SGD(self.model.parameters(), **self.cfg.optimizer.sgd)
 
     # -------------------- logging --------------------
     def _cfg_to_dict(self, cfg):
@@ -206,10 +134,10 @@ class LearnerDownstream:
 
             # move data to device
             batch = self.move_batch_to_device(data)
-            target = batch["future_positions"].float()  # target future positions
             pred = self.model(batch)                            # [B, T_pred, 2]
 
-            loss = F.mse_loss(pred, target)
+            target = batch["future_positions"].float()  # target future positions
+            loss = torch.nn.functional.mse_loss(pred, target)
 
             if not torch.isfinite(loss):
                 print("[BAD] loss NaN/Inf"); raise FloatingPointError("loss NaN/Inf")

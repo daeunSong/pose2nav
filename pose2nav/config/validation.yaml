@@ -1,23 +1,29 @@
 dataset:
-  index_file: "data/processed/samples/samples_val_index.json"
+  sample_file: "data/val/samples.pkl"
+  train: false
   only_human_visable: true
   only_nonlinear: true
-  resize: [224, 224] #[192, 192]
+  resize: [224, 224] #[192, 192]  # decrease
   metric_waypoint_spacing: 1.0
 
+dataloader:
+  num_workers: 16  # increase #######
+  batch_size: 32   # increase #######
+  shuffle: True # whether to shuffle data or not
+  pin_memory: True # use pageable memory or pinned memory (https://developer.nvidia.com/blog/how-optimize-data-transfers-cuda-cc/)
+
 eval_params:
-  batch_size: 16
-  num_workers: 4
+  batch_size: 32
+  num_workers: 16
 
 model:
-  d: 1024  # Must match the d_out in pretext
-  d_goal: 64
-  d_hidden: 1024
+  d: 512
+  human_pool_temp: 1.0
 
   input:
     T_obs: 6
-    T_pred: 6
-    N_human: 3
+    T_pred: 12
+    N_human: 6
     N_joints: 17
 
   image_encoder:
@@ -26,21 +32,39 @@ model:
 
   obs_transformer:
     layers: 3
-    heads: 4
+    heads: 4      # increase #######
     ff_mult: 4
     dropout: 0.1
     norm: preln        # or "postln"
 
   projector:
     use: true
-    d_out: 1024          # output dim of z_obs / z_traj
+    d_out: 2048          # 4096
     hidden: 1024       
 
-  # downstream
-  future_traj_encoder:
-    hidden: 1024
-    num_layers: 1
+  downstream:
+    goal_encoder:
+      dims: [64,256] # MLP dimensions
+      l_act: False 
+      dropout: 0.2
+      bias: False
+  
+    head:
+      dims: [256, 64]
+      l_act: False 
+      dropout: 0.2
+      bias: False
+
+    future_traj_encoder:
+      hidden: 1024
+
+loss_params:
+  vicreg:
+    sim_coef: 25.0
+    std_coef: 25.0
+    cov_coef: 5.0
+    # eps: 1e-4
 
 directory:
-  downstream_ckpt: checkpoint/downstream/socialnav_downstream_e50_20250901_best.pth
-  out_path: /home/songd/research/pose2nav/pose2nav/validation/val_results_20250901.pkl
+  downstream_ckpt: /home/songd/research/pose2nav/checkpoint/downstream/socialnav_downstream_d512_e600_20250904_best.pth
+  out_path: /home/songd/research/pose2nav/pose2nav/validation/val_results_20250904_exp1.pkl

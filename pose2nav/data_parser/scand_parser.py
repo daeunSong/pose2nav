@@ -12,7 +12,6 @@ import numpy as np
 from rich import print
 import rosbag
 from pyntcloud import PyntCloud
-import rosbag
 from tqdm import tqdm
 from scipy.signal import savgol_filter
 import pandas as pd

@@ -15,9 +15,6 @@ dataloader:
 train_params:
   seed: 42
   epochs: 200           
-  head_lr: 5e-4        
-  backbone_lr: 1e-4    
-  weight_decay: 1e-5
   save_every: 50
   save_best: 150
   loss: vicreg
@@ -26,7 +23,6 @@ train_params:
 
 model:
   d: 512
-  d_goal: 64
   human_pool_temp: 1.0
 
   input:
@@ -51,31 +47,61 @@ model:
     d_out: 2048          # 4096
     hidden: 1024       
 
-  # downstream
-  future_traj_encoder:
-    hidden: 1024
+  downstream:
+    goal_encoder:
+      dims: [64,256] # MLP dimensions
+      l_act: False 
+      dropout: 0.2
+      bias: False
+  
+    head:
+      dims: [256, 64]
+      l_act: False 
+      dropout: 0.2
+      bias: False
 
+    future_traj_encoder:
+      hidden: 1024
+
+# pretext
 loss_params:
   vicreg:
     sim_coef: 25.0
     std_coef: 25.0
     cov_coef: 5.0
     # eps: 1e-4
+
+optimizer:
+  adamw:  # pretext
+    lr: 5e-4
+    betas:
+      - 0.9
+      - 0.999
+    eps: 1e-8
+    weight_decay: 0.03
+    amsgrad: False
+
+  sgd:  # downstream
+    lr: 5e-2
+    momentum: 0 
+    weight_decay: 0 
+    dampening: 0 
+    nesterov: False 
     
 directory:
   pretext_model_dir: /home/songd/research/pose2nav/checkpoint/pretext
   downstream_model_dir: /home/songd/research/pose2nav/checkpoint/downstream 
-  pretext_ckpt: ${directory.pretext_model_dir}/${logger.pretext.project}_vicreg_d${model.d}_exp2_20250903_best.pth
+  pretext_ckpt: ${directory.pretext_model_dir}/${logger.pretext.experiment_name}_20250904_best.pth
 
 logger:
   pretext:
     project: socialnav_pretext
     entity: daeun-song-george-mason-university
     mode: online
-    experiment_name: ${logger.pretext.project}_d${model.d}_exp2
+    experiment_name: ${logger.pretext.project}_d${model.d}_e${train_params.epochs}_exp2
 
   downstream:
     project: socialnav_downstream
     entity: daeun-song-george-mason-university
     mode: online
-    experiment_name: ${logger.downstream.project}_d${model.d}_exp2
+    experiment_name: ${logger.downstream.project}_d${model.d}_e${train_params.epochs}_exp2
