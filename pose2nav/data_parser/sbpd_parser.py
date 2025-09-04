@@ -3,16 +3,16 @@ Parses bag files. Thanks to "GNM: A General Navigation Model to Drive Any Robot"
 by Dhruv Shah et el. paper for open sourcing their code.
 link: https://github.com/PrieureDeSion/drive-any-robot
 """
-from typing import Any, Optional, Union, Callable
+from typing import Any, Union, Callable
 import os
 from pathlib import Path
 import pickle
 
 import numpy as np
 from rich import print
-import rosbag
 from pyntcloud import PyntCloud
-import rosbag
+from rosbags.rosbag2 import Reader as Rosbag2
+from rosbags.serde import deserialize_cdr
 from tqdm import tqdm
 from scipy.signal import savgol_filter
 import pandas as pd
@@ -25,14 +25,14 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 class SBPDParser:
     def __init__(self, cfg):
         self.cfg = cfg
-
+        
     def process_images(self, im_list: list, img_process_func: Callable) -> list:
         """
         Process image data from a topic that publishes ros images into a list of PIL images
         """
         images = []
         for img_msg in im_list:
-            img = img_process_func(img_msg)
+            img = img_process_func(img_msg).convert('RGB')
             images.append(img)
         return images
 
@@ -61,7 +61,7 @@ class SBPDParser:
 
     def parse_data(
         self,
-        bag: rosbag.Bag,
+        bag: Rosbag2,
         imtopics: Union[list[str], str],
         odomtopics: Union[list[str], str],
         lidartopics: Union[list[str], str],
@@ -69,7 +69,7 @@ class SBPDParser:
         img_process_func: Any,
         lidar_process_func: Any,
         odom_process_func: Any,
-        rate: float = 4.0,
+        rate: float = 2.0,
         ang_offset: float = 0.0,
     ):
         """
@@ -92,96 +92,81 @@ class SBPDParser:
             traj_data (list): list of odom and linear/angular velocity data
         """
         # check if bag has both topics
-        odomtopic = None
-        actiontopic = None
-        imtopic = None
-        pctopic = None
-        if type(imtopics) == str:
-            imtopic = imtopics
-        else:
-            for imt in imtopics:
-                if bag.get_message_count(imt) > 0:
-                    imtopic = imt
-                    break
-        if type(odomtopics) == str:
-            odomtopic = odomtopics
-        else:
-            for ot in odomtopics:
-                if bag.get_message_count(ot) > 0:
-                    odomtopic = ot
-                    break
-        if type(actiontopics) == str:
-            actiontopic = actiontopics
-        else:
-            for ac in actiontopics:
-                if bag.get_message_count(ac) > 0:
-                    actiontopic = ac
-                    break
-        if type(lidartopics) == str:
-            pctopic = lidartopics
-        else:
-            for pc in lidartopics:
-                if bag.get_message_count(pc) > 0:
-                    pctopic = pc
-                    break
-        if not (imtopic and actiontopic and odomtopic):
-            # bag doesn't have topics
-            return None, None, None
+        imtopic = self.cfg.topics.rgb[0]
+        odomtopic = self.cfg.topics.odom[0]
+        actiontopic = self.cfg.topics.cmd_vel[0]
+        pctopic = self.cfg.topics.lidar[0]
 
-        synced_imdata = []
-        synced_odomdata = []
-        synced_actiondata = []
-        synced_pcdata = []
         # get start time of bag in seconds
-        currtime = bag.get_start_time()
-        starttime = currtime
+        # currtime = bag.get_start_time()
+        # starttime = currtime
         # print(f"{starttime = }")
 
+        all_data = []
         curr_imdata = None
         curr_odomdata = None
         curr_actiondata = None
         curr_pcdata = None
         times = []
 
-        for topic, msg, t in bag.read_messages(
-            topics=[imtopic, odomtopic, actiontopic, pctopic]
-        ):
-            if t.to_sec() - starttime < self.cfg.skip_first_seconds:
+        starttime = None
+
+        for connection, timestamp, rawdata in bag.messages():
+            t = timestamp / 1e9
+            if starttime == None:
+                currtime = t
+                starttime = currtime
+            if t - starttime < self.cfg.skip_first_seconds:
                 # skip the first few seconds
                 continue
-            if topic == imtopic:
-                curr_imdata = msg
-            elif topic == odomtopic:
-                curr_odomdata = msg
-            elif topic == actiontopic:
-                curr_actiondata = msg
-            # elif topic == pctopic:
-                # curr_pcdata = process_pointclouds(msg)
+            
+            topic = connection.topic
+            try:
+                if topic == imtopic:
+                    msg = deserialize_cdr(rawdata, connection.msgtype)
+                    curr_imdata = msg
+                    curr_timestamp = t
+                elif topic == odomtopic:
+                    msg = deserialize_cdr(rawdata, connection.msgtype)
+                    curr_odomdata = msg
+                elif topic == actiontopic:
+                    msg = deserialize_cdr(rawdata, connection.msgtype)
+                    curr_actiondata = msg
+                else:
+                    # Shouldn't happen due to connections filter, but be defensive:
+                    continue
+            except Exception as e:
+                print(f"[WARN] Skipping message on {topic} at {t:.3f}s: {e}")
+                continue
 
-            if (t.to_sec() - currtime) >= 1.0 / rate:
-                if (
-                    curr_imdata is not None
-                    and curr_odomdata is not None
-                    and curr_actiondata is not None
-                    # and curr_pcdata is not None
-                ):
-                    synced_imdata.append(curr_imdata)
-                    synced_odomdata.append(curr_odomdata)
-                    synced_actiondata.append(curr_actiondata)
-                    # synced_pcdata.append(curr_pcdata)
-                currtime = t.to_sec()
-                times.append(currtime - starttime)
+            if all(x is not None for x in [curr_imdata, curr_odomdata, curr_actiondata]):
+                all_data.append((curr_timestamp, curr_imdata, curr_odomdata, curr_actiondata))
+                curr_imdata = curr_odomdata = curr_actiondata = curr_timestamp = None
+
+        synced_imdata = []
+        synced_odomdata = []
+        synced_actiondata = []
+        synced_pcdata = []
+        last_time = None
+
+        for t, im, odom, action in sorted(all_data, key=lambda x: x[0]):
+            if last_time is None or (t - last_time) >= 1.0 / rate:
+                synced_imdata.append(im)
+                synced_odomdata.append(odom)
+                synced_actiondata.append(action)
+                # synced_pcdata.append(pc)
+                last_time = t
 
         img_data = self.process_images(synced_imdata, img_process_func)
         # pc_data = synced_pcdata
-        pc_data = None
-
+        pc_data = None  
         traj_data = self.process_odom(
             synced_odomdata,
             synced_actiondata,
             odom_process_func,
             ang_offset=ang_offset,
         )
+
         # smooth pos and actions
         # traj_data["yaw"] = savgol_filter(
         #     traj_data["yaw"], window_length=31, polyorder=3, mode="nearest"
@@ -208,22 +193,15 @@ class SBPDParser:
         # bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".bag"]
 
         try:
-            b = rosbag.Bag(bag_path)
-        except rosbag.ROSBagException as e:
+            b = Rosbag2(bag_path.parent)
+            b.open()
+            # print(f"Bag opened from path: {bag_path}")
+        except Exception as e:
             print(e)
-            print(f"Error loading {bag_path}. Skipping...")
-            # return
-
-        # robot_name = "spot" if "spot" in bag_path.lower() else "jackal"
-        self.cfg.topics = None
-        if "spot" in bag_path.lower():
-            self.cfg.topics = self.cfg.spot
-        elif "jackal" in bag_path.lower():
-            self.cfg.topics = self.cfg.jackal
-        else:
-            raise Exception("Invalid robot type!")
+            print(f"Error loading {bag_path.parent}. Skipping...")
+            return
         # name is that folders separated by _ and then the last part of the path
-        traj_name = "_".join(bag_path.split("/")[-1:])[:-4]
+        traj_name = "_".join(bag_path.stem.split("_")[:-1])
 
         # parse data
         (
@@ -239,9 +217,10 @@ class SBPDParser:
             eval(self.cfg.functions.rgb),
             eval(self.cfg.functions.lidar),
             eval(self.cfg.functions.odom),
-            rate=self.cfg.sample_rate,
+            rate=self.cfg.sample_rate / 2, # scout too slow
             ang_offset=self.cfg.ang_offset, 
         )
+
         if bag_img_data is None or bag_traj_data is None:
             print(
                 f"{bag_path} did not have the topics we were looking for. Skipping..."
@@ -249,9 +228,13 @@ class SBPDParser:
             return
         # print(f"Working on bag: {bag_path}")
         # remove backwards movement
-        packaged = package_sbpd(bag_img_data, bag_traj_data)
+        cut_trajs = filter_backwards_scand(bag_img_data, bag_traj_data, bag_pc_data)
         # for i, (img_data_i, traj_data_i, pc_data_i) in enumerate(cut_trajs):
-        for i, (img_data_i, traj_data_i) in enumerate(packaged):
+        for i, (img_data_i, traj_data_i) in enumerate(cut_trajs):
+            if len(img_data_i) < self.cfg.skip_traj_shorter:
+                # skip trajectories with less than 20 frames
+                continue
+
             traj_name_i = f"{traj_name}_{i}"
             traj_folder_i = save_dir / traj_name_i
             output_rgb = str(traj_folder_i / "rgb")
@@ -280,3 +263,4 @@ class SBPDParser:
             # for j, pc in enumerate(pc_data_i):
             #     pc = PyntCloud(pc)
             #     pc.to_file(os.path.join(output_pc, f"{j}.ply"))
+        b.close()

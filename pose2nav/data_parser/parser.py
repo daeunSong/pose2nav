@@ -13,7 +13,6 @@ import json
 
 from utils.helpers import get_conf
 from utils.parser_utils import poly_fit
-from collections import defaultdict
 
 from skeleton.predict import PoseEstimatorNode
 import cv2
@@ -225,7 +224,7 @@ if __name__ == "__main__":
         # Run skeletal keypoints parsing
         keypoint_model = PoseEstimatorNode()
 
-        processed_dir = Path(cfg.parsed_dir)
+        processed_dir = Path(cfg.processed_dir)
         folders = [x for x in processed_dir.iterdir() if x.is_dir()]
 
         for folder in tqdm(folders):
@@ -289,16 +288,6 @@ if __name__ == "__main__":
             with save_path.open("wb") as f:
                 pickle.dump(keypoints_output, f)
                 print(f"[Info] Done parisng {folder}")
-            # save_path = keypoints_dir / "keypoints_data.json"
-            # with save_path.open("w") as f:
-            #     # Ensure NumPy arrays are converted to lists
-            #     def tolist_handler(obj):
-            #         if isinstance(obj, (np.ndarray,)):
-            #             return obj.tolist()
-            #         raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
-
-            #     json.dump(keypoints_output, f, indent=2, default=tolist_handler)
-                print(f"[Info] Done parisng {folder}")
     else:                 
         if args.create_samples:
             save_dir = Path(cfg.parsed_dir)
@@ -329,7 +318,7 @@ if __name__ == "__main__":
             if dataset == "musohu":
                 from data_parser.musohu_parser import MuSoHuParser
                 cfg.musohu.update({"sample_rate": cfg.sample_rate})
-                cfg.musohu.update({"save_dir": cfg.parsed_dir})
+                cfg.musohu.update({"save_dir": cfg.processed_dir})
                 data_parser = MuSoHuParser(cfg.musohu)
                 bag_files = Path(data_parser.cfg.bags_dir).resolve()
                 bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".bag"]
@@ -345,7 +334,7 @@ if __name__ == "__main__":
             elif dataset == "scand":
                 from data_parser.scand_parser import SCANDParser
                 cfg.scand.update({"sample_rate": cfg.sample_rate})
-                cfg.scand.update({"save_dir": cfg.parsed_dir})
+                cfg.scand.update({"save_dir": cfg.processed_dir})
                 data_parser = SCANDParser(cfg.scand)
                 bag_files = Path(data_parser.cfg.bags_dir).resolve()
                 bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".bag"]
@@ -357,20 +346,21 @@ if __name__ == "__main__":
                     except Exception as e:
                         print(f"[ERROR] Crashed on {bag}")
             
-            # # TODO: need to fix it into ROS2
-            # elif dataset == "sbpd":
-            #     from data_parser.sbpd_parser import SBPDParser
-            #     cfg.scand.update({"sample_rate": cfg.sample_rate})
-            #     cfg.scand.update({"save_dir": cfg.parsed_dir})
-            #     data_parser = SBPDParser(cfg.sbpd)
-            #     bag_files = Path(data_parser.cfg.bags_dir).resolve()
-            #     bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".db3"]
-            #     # process_map(data_parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
-            #     for bag in tqdm(bag_files):
-            #         try:
-            #             data_parser.parse_bags(bag)
-            #             print(f"[Info] Done parisng {bag}")
-            #         except Exception as e:
-            #             print(f"[ERROR] Crashed on {bag}")
-            # else:
-            #     raise Exception("Invalid dataset!")
+            elif dataset == "sbpd":
+                from data_parser.sbpd_parser import SBPDParser
+                cfg.sbpd.update({"sample_rate": cfg.sample_rate})
+                cfg.sbpd.update({"save_dir": cfg.processed_dir})
+                data_parser = SBPDParser(cfg.sbpd)
+                root = Path(data_parser.cfg.bags_dir)
+                bag_files = [x for x in root.rglob("*db3")]
+                # bag_files = Path(data_parser.cfg.bags_dir).resolve()
+                # bag_files = [str(x) for x in bag_files.iterdir() if x.suffix == ".db3"]
+                # process_map(data_parser.parse_bags, bag_files, max_workers=os.cpu_count() - 4)
+                for bag in tqdm(bag_files):
+                    try:
+                        data_parser.parse_bags(bag)
+                        # print(f"[Info] Done parisng {bag}")
+                    except Exception as e:
+                        print(f"[ERROR] Crashed on {bag}")
+            else:
+                raise Exception("Invalid dataset!")

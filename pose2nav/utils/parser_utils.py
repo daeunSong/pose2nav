@@ -5,6 +5,7 @@ import torchvision.transforms.functional as TF
 import sensor_msgs.point_cloud2 as pc2
 import pandas as pd
 import io
+import struct
 
 from typing import Any
 
@@ -82,7 +83,19 @@ def quat_to_yaw(
     t4 = 1.0 - 2.0 * (y * y + z * z)
     return np.arctan2(t3, t4)
 
-
+def process_pointclouds_ros2(msg):
+    """Process ROS2 PointCloud2 message."""
+    try:
+        points = []
+        for i in range(0, len(msg.data), msg.point_step):
+            if i + 12 <= len(msg.data):
+                x, y, z = struct.unpack_from('fff', msg.data, i)
+                points.append([x, y, z])
+        return np.array(points, dtype=np.float32)
+    except Exception as e:
+        print(f"Error processing point cloud: {e}")
+        return np.array([])
+        
 def process_pointclouds(msg):
     """
     Process lidar data from a velodyne topic
@@ -90,7 +103,6 @@ def process_pointclouds(msg):
     pc = list(pc2.read_points(msg, skip_nans=True, field_names=("x", "y", "z")))
     pc = pd.DataFrame(np.array(pc), columns=("x", "y", "z"))
     return pc
-
 
 def nav_to_xy_yaw(
     odom_msg, action_msg, ang_offset: float
@@ -141,6 +153,18 @@ def nav_to_xy_yaw_scand(
     )
     return [position.x, position.y, position.z], [v, w], yaw, [orientation.x, orientation.y, orientation.z, orientation.w]
 
+def nav_to_xy_yaw_sbpd(odom_msg, action_msg, ang_offset):
+    """Process ROS2 Odometry and Twist messages."""
+    xy = [odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y]
+    q = odom_msg.pose.pose.orientation
+    siny_cosp = 2 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
+    yaw = np.arctan2(siny_cosp, cosy_cosp) + ang_offset
+    if action_msg is not None:
+        vw = [action_msg.linear.x, action_msg.angular.z]
+    else:
+        vw = [0.0, 0.0]
+    return [xy[0], xy[1], 0], vw, yaw, [q.x, q.y, q.z, q.w]
 
 def is_backwards(
     pos1: np.ndarray, yaw1: float, pos2: np.ndarray,

@@ -1,4 +1,5 @@
 # Parser config
+processed_dir: data/processed/sbpd #data/train # where to store/read parsed bags
 parsed_dir: data/val #data/train # where to store/read parsed bags
 sample_rate: 4.0 # number of frames per second (hz)
 pred_len: 12 # action prediction length
@@ -47,8 +48,8 @@ scand:
 sbpd:
   bags_dir: /media/songd/Crucial X9/data/social_nav/sbpd
   ang_offset: 0.0
-  skip_first_seconds: 0 # skip the first few seconds
-  skip_traj_shorter: 1000 # skip trajectories with fewer frames than skip_traj_short_traj
+  skip_first_seconds: 1 # skip the first few seconds
+  skip_traj_shorter: 18 # skip trajectories with fewer frames than skip_traj_short_traj
   topics: # topic names for each sensor
     rgb: ["/zed2/zed_node/rgb/image_rect_color/compressed"]
     odom: ["/odom"]
@@ -56,6 +57,6 @@ sbpd:
     lidar: ["/velodyne_points"]
   functions:
     rgb: "process_rgb"
-    lidar: "process_pointclouds"
-    odom: "nav_to_xy_yaw"
+    lidar: "process_pointclouds_ros2"
+    odom: "nav_to_xy_yaw_sbpd"
 
