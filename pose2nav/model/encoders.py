@@ -44,27 +44,12 @@ class ImageEncoder(nn.Module):
             self.fc = nn.Sequential(nn.Flatten(), nn.Linear(resnet_out_dim, output_dim), nn.LayerNorm(output_dim))
         
         elif self.backbone_name == "dino":
-            try:
-                import timm
-            except ImportError as e:
-                raise ImportError("Backbone 'dino' requires timm. Install with `pip install timm`.") from e
-
-            # Choose a sensible default DINO model; adjust if you prefer base/large.
-            model_name = "vit_small_patch16_224.dino"
-            self.dino = timm.create_model(model_name, pretrained=pretrained)
-            # Remove classifier head if present
-            if hasattr(self.dino, "reset_classifier"):
-                self.dino.reset_classifier(0)
-
-            embed_dim = getattr(self.dino, "embed_dim", None) or getattr(self.dino, "num_features", None)
-            if embed_dim is None:
-                raise ValueError(f"Could not infer embed_dim for DINO model '{model_name}'.")
-
-            # Project CLS embedding to output_dim
+            self.encoder = torch.hub.load(
+                "facebookresearch/dinov2", "dinov2_vits14_reg"
+            )
+            dino_out_dim = 384
             self.fc = nn.Sequential(
-                nn.LayerNorm(embed_dim),
-                nn.Linear(embed_dim, output_dim),
-                nn.LayerNorm(output_dim),
+                nn.Linear(dino_out_dim, output_dim), nn.LeakyReLU()
             )
         
         else:
@@ -87,30 +72,11 @@ class ImageEncoder(nn.Module):
         return {"resnet18": 512, "resnet34": 512, "resnet50": 2048}[name]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: [B, 3, H, W]
-        if self.backbone_name == "dino":
-            feats = self.dino.forward_features(x)  # often [B, tokens, C] or [B, C]
-            if isinstance(feats, dict):
-                feats = feats.get("x", feats.get("last_hidden_state", None))
-                if feats is None:
-                    raise ValueError("Unsupported feature dict structure returned by timm DINO model.")
-            if feats.dim() == 3:
-                cls = feats[:, 0]          # CLS token
-            elif feats.dim() == 2:
-                cls = feats                # already pooled
-            else:
-                raise ValueError(f"Unexpected DINO feature shape: {feats.shape}")
-            return self.fc(cls)            # [B, output_dim]
-
-        # CNN/ResNet paths
         feats = self.encoder(x)            # [B, C, 1, 1]
         return self.fc(feats)              # [B, output_dim]
 
 # ---------- Trajectory Encoder ----------
 class TrajectoryEncoder(nn.Module):
-    """
-    Encodes a 2D sequence [B, T, 2] into a vector [B, output_dim].
-    Uses a GRU for better temporal summarization.
-    """
     def __init__(self, input_dim: int = 2, T_pred = 12, output_dim: int = 256):
         super().__init__()
         action_encoder_output_size = input_dim * T_pred
@@ -124,6 +90,23 @@ class TrajectoryEncoder(nn.Module):
         B, T, D = traj.shape
         flat = traj.reshape(B, T * D)        # [B, T*2]
         return self.encoder(flat)            # [B, output_dim]
+
+# ---------- Trajectory Encoder ----------
+# class TrajectoryEncoder(nn.Module):
+#     """
+#     Encodes a 2D sequence [B, T, 2] into a vector [B, output_dim].
+#     Uses a GRU for better temporal summarization.
+#     """
+#     def __init__(self, input_dim: int = 2, output_dim: int = 256, hidden: int = 256, num_layers: int = 1):
+#         super().__init__()
+#         self.gru = nn.GRU(input_size=input_dim, hidden_size=hidden, num_layers=num_layers,
+#                           batch_first=True, bidirectional=False)
+#         self.proj = nn.Sequential(nn.LayerNorm(hidden), nn.Linear(hidden, output_dim), nn.LayerNorm(output_dim))
+
+#     def forward(self, traj: torch.Tensor) -> torch.Tensor:  # traj: [B, T, 2]
+#         _, h = self.gru(traj)            # h: [num_layers, B, hidden]
+#         h = h[-1]                        # [B, hidden]
+#         return self.proj(h)              # [B, output_dim]
 
 # ---------- Keypoint Encoder (2D) ----------
 class KeypointEncoder2D(nn.Module):

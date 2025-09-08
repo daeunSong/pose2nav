@@ -16,8 +16,8 @@ import wandb  # W&B
 from model.data_loader import SocialNavDataset
 from model.pretext_model import PretextModel
 from model.losses import get_loss_fn
-from utils.helpers import get_conf, tensor_stats, NaNGuard
-from utils.nn import save_checkpoint, load_checkpoint
+from utils.helpers import get_conf
+from utils.nn import save_checkpoint, load_checkpoint, check_grad_norm
 
 
 class Learner:
@@ -36,7 +36,7 @@ class Learner:
         self.init_logger()  # W&B init
 
     def _build_checkpoint(self, epoch:int, iteration:int, best:float, last_loss:float):
-        model = self.uncompiled_model
+        model = self.model #self.uncompiled_model
         ckpt = {
             "time":                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "epoch":                epoch,
@@ -47,13 +47,13 @@ class Learner:
             "optimizer_name":       type(self.optimizer).__name__,
             "optimizer":            self.optimizer.state_dict(),
             "model":                model.state_dict(),  
-            "image_encoder":        model.image_encoder.state_dict(),
-            "kp_encoder":           model.kp_encoder.state_dict(),
-            "observation_encoder":  model.observation_encoder.state_dict(),
-            "proj_obs":             model.proj_obs.state_dict(),
-            "proj_future":          model.proj_future.state_dict(),
-            "final_ln":             model.final_ln.state_dict(),
-            "future_traj_encoder":  model.future_traj_encoder.state_dict(),
+            # "image_encoder":        model.image_encoder.state_dict(),
+            # "kp_encoder":           model.kp_encoder.state_dict(),
+            # "observation_encoder":  model.observation_encoder.state_dict(),
+            # "proj_obs":             model.proj_obs.state_dict(),
+            # "proj_future":          model.proj_future.state_dict(),
+            # "final_ln":             model.final_ln.state_dict(),
+            # "future_traj_encoder":  model.future_traj_encoder.state_dict(),
         }
         return ckpt
 
@@ -83,8 +83,9 @@ class Learner:
         )
 
     def init_model(self):
-        self.uncompiled_model = PretextModel(self.cfg).to(self.device)
-        self.model = torch.compile(PretextModel(self.cfg)).to(self.device)
+        self.model = PretextModel(self.cfg).to(self.device)
+        # self.uncompiled_model = self.model
+        # self.model = torch.compile(self.model)
 
     def init_loss(self):
         # Base loss (VICReg or Barlow) between z_obs and z_traj
@@ -159,7 +160,11 @@ class Learner:
 
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            grad_norm = check_grad_norm(self.model)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             self.optimizer.step()
+
+            
 
             total_loss += float(loss.item()); num_batches += 1
             avg = total_loss / num_batches
@@ -171,6 +176,7 @@ class Learner:
                     "train/sim_loss": float(sim_loss.item()), # similarity
                     "train/std_loss": float(std_loss.item()), # invariance
                     "train/cov_loss": float(cov_loss.item()), # covariance
+                    "train/grad_norm": grad_norm,
                     "train/lr": self.optimizer.param_groups[0]["lr"],
                     # "train/epoch": epoch_idx + 1,
                 }, step=self.global_step)

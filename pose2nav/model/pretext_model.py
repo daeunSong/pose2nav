@@ -93,10 +93,10 @@ class PretextModel(nn.Module):
             return nn.Sequential(
                 nn.Linear(d_in, d_hidden, bias=False),
                 nn.BatchNorm1d(d_hidden, eps=1e-5, affine=True),
-                nn.ReLU(inplace=False),
+                nn.ReLU(inplace=True),
                 nn.Linear(d_hidden, d_hidden, bias=False),
                 nn.BatchNorm1d(d_hidden, eps=1e-5, affine=True),
-                nn.ReLU(inplace=False),
+                nn.ReLU(inplace=True),
                 nn.Linear(d_hidden, d_out, bias=False),
             )
         self.proj_obs    = projector(d, prj_hidden_w, prj_d_out)

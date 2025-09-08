@@ -1,10 +1,10 @@
 # Parser config
 processed_dir: data/processed/sbpd #data/train # where to store/read parsed bags
-parsed_dir: data/val #data/train # where to store/read parsed bags
+parsed_dir: data/scand/val #data/train # where to store/read parsed bags
 sample_rate: 4.0 # number of frames per second (hz)
 pred_len: 12 # action prediction length
 obs_len: 6 # observation length
-num_ped: 6 # max number of pedestrian
+num_ped: 3 # max number of pedestrian
 linear_threshold: 0.005 # Minimum error to be considered for non linear traj
 musohu:
   bags_dir: /media/songd/Crucial X9/data/social_nav/musohu

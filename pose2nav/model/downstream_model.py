@@ -29,17 +29,23 @@ class MLPHead(nn.Module):
             nn.Dropout(gc.dropout),
 
             nn.Linear(goal_dims[1], d, bias=gc.bias),   # d = obs_context_size (e.g., 512)
-            nn.LayerNorm(d),
         )
 
+        # self.goal_enc = nn.Sequential(
+        #     nn.LayerNorm(2),
+        #     nn.Linear(2, 64), 
+        #     nn.LeakyReLU(negative_slope=0.2),
+        #     nn.LayerNorm(64),
+        # )
+
         fuse_in = d * 2
+        # fuse_in = d + 64
 
         hc = cfg.model.downstream.head
         head_dims = hc.dims
 
         # build MLP head
         self.head = nn.Sequential(
-            nn.LayerNorm(fuse_in),
             nn.Linear(fuse_in, head_dims[0], bias=hc.bias),
             nn.LeakyReLU(0.2, inplace=True),
             nn.LayerNorm(head_dims[0]),
@@ -51,6 +57,18 @@ class MLPHead(nn.Module):
             nn.Dropout(hc.dropout),
 
             nn.Linear(head_dims[1], 2 * self.T_pred, bias=hc.bias),  # final layer, no norm/act
+
+            # nn.LayerNorm(fuse_in),
+
+            # nn.Linear(fuse_in, head_dims[0]),
+            # nn.LeakyReLU(0.2),
+            # nn.LayerNorm(head_dims[0]),
+            
+            # nn.Linear(head_dims[0], head_dims[1]),
+            # nn.LeakyReLU(0.2),
+            # nn.LayerNorm(head_dims[1]),
+
+            # nn.Linear(head_dims[1], 2 * self.T_pred),  # final layer, no norm/act
         )
 
     def forward(self, z_obs: torch.Tensor, goal: torch.Tensor) -> torch.Tensor:

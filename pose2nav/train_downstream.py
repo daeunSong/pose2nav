@@ -8,7 +8,6 @@ from typing import Dict, Any, Optional
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 import wandb
@@ -16,7 +15,7 @@ import wandb
 from model.data_loader import SocialNavDataset
 from model.downstream_model import DownstreamTrajPredictor
 from utils.helpers import get_conf
-from utils.nn import save_checkpoint, load_checkpoint
+from utils.nn import save_checkpoint, load_checkpoint, check_grad_norm
 
 
 class LearnerDownstream:
@@ -36,7 +35,7 @@ class LearnerDownstream:
         self.init_logger()
 
     def _build_checkpoint(self, epoch:int, iteration:int, best:float, last_loss:float):
-        model = self.uncompiled_model
+        model = self.model #self.uncompiled_model
         ckpt = {
             "time":             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "epoch":            epoch,
@@ -47,8 +46,8 @@ class LearnerDownstream:
             "optimizer_name":   type(self.optimizer).__name__,
             "optimizer":        self.optimizer.state_dict(),
             "model":            model.state_dict(),  
-            "backbone":         model.backbone.state_dict(),  # frozen pretext backbone
-            "head":             model.head.state_dict(),          # prediction head
+            # "backbone":         model.backbone.state_dict(),  # frozen pretext backbone
+            # "head":             model.head.state_dict(),          # prediction head
         }
         return ckpt
     # -------------------- setup --------------------
@@ -64,8 +63,9 @@ class LearnerDownstream:
         self.train_loader = DataLoader(dataset, **self.cfg.dataloader)
 
     def init_model(self):
-        self.uncompiled_model = DownstreamTrajPredictor(self.cfg).to(self.device)
-        self.model = torch.compile(DownstreamTrajPredictor(self.cfg)).to(self.device)
+        self.model = DownstreamTrajPredictor(self.cfg).to(self.device)
+        # self.uncompiled_model = self.model
+        # self.model = torch.compile(self.model)
 
         ckpt = load_checkpoint(self.ckpt_path, self.device)
         state = ckpt.get("model", ckpt)
@@ -85,6 +85,7 @@ class LearnerDownstream:
 
     def init_optimizer(self):
         self.optimizer = torch.optim.SGD(self.model.parameters(), **self.cfg.optimizer.sgd)
+        # self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=5e-4, weight_decay=1e-5)
 
     # -------------------- logging --------------------
     def _cfg_to_dict(self, cfg):
@@ -121,7 +122,7 @@ class LearnerDownstream:
         out["past_frames"] = [x.to(self.device) for x in batch["past_frames"]]
         out["future_positions"] = batch["future_positions"].to(device=self.device)
         out["past_kp_2d"] = batch["past_kp_2d"].to(device=self.device)
-        out["goal"] = out["future_positions"][:, -1, :] # [B, 2]
+        out["goal"] = out["future_positions"][:, -1, :].contiguous()  # [B, 2]
         return out
 
     def train_one_epoch(self, epoch_idx: int = 0):
@@ -144,15 +145,11 @@ class LearnerDownstream:
 
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            grad_norm = check_grad_norm(self.model)
+            # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             self.optimizer.step()
 
-            with torch.no_grad():
-                ade = (pred - target).norm(dim=-1).mean()             # mean over (B,T)
-                fde = (pred[:, -1] - target[:, -1]).norm(dim=-1).mean()
-
             total_loss += float(loss.item())
-            total_ade  += float(ade.item())
-            total_fde  += float(fde.item())
             num_batches += 1
 
             pbar.set_postfix(loss=f"{loss.item():.4f}")
@@ -160,8 +157,7 @@ class LearnerDownstream:
             if self.use_wandb:
                 wandb.log({
                     "downstream/loss_step": float(loss.item()),
-                    "downstream/ade_step": float(ade.item()),
-                    "downstream/fde_step": float(fde.item()),
+                    "downstream/grad_norm": grad_norm,
                     "downstream/lr_head": float(self.optimizer.param_groups[0]["lr"]),
                 }, step=self.global_step)
 

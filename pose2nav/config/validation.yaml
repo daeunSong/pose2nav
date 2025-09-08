@@ -1,9 +1,9 @@
 dataset:
-  sample_file: "data/val/samples.pkl"
+  sample_file: "data/scand/val/samples.pkl"
   train: false
   only_human_visable: true
   only_nonlinear: true
-  resize: [224, 224] #[192, 192]  # decrease
+  resize: [154, 84]  # decrease
   metric_waypoint_spacing: 1.0
 
 dataloader:
@@ -11,6 +11,9 @@ dataloader:
   batch_size: 32   # increase #######
   shuffle: True # whether to shuffle data or not
   pin_memory: True # use pageable memory or pinned memory (https://developer.nvidia.com/blog/how-optimize-data-transfers-cuda-cc/)
+  drop_last: true
+  persistent_workers: true
+  prefetch_factor: 4
 
 eval_params:
   batch_size: 32
@@ -62,9 +65,9 @@ loss_params:
   vicreg:
     sim_coef: 25.0
     std_coef: 25.0
-    cov_coef: 5.0
+    cov_coef: 3.0
     # eps: 1e-4
 
 directory:
-  downstream_ckpt: /home/songd/research/pose2nav/checkpoint/downstream/socialnav_downstream_d512_e600_20250904_best.pth
-  out_path: /home/songd/research/pose2nav/pose2nav/validation/val_results_20250904_exp1.pkl
+  downstream_ckpt: /home/songd/research/pose2nav/checkpoint/downstream/socialnav_downstream_d512_e200_exp13_20250908_best.pth
+  out_path: /home/songd/research/pose2nav/pose2nav/validation/val_results_exp13.pkl

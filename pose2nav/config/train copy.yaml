@@ -71,7 +71,7 @@ loss_params:
   vicreg:
     sim_coef: 25.0
     std_coef: 25.0
-    cov_coef: 3.0
+    cov_coef: 1.0
     # eps: 1e-4
 
 optimizer:
@@ -84,18 +84,18 @@ optimizer:
     weight_decay: 0.03
     amsgrad: False
 
-  sgd:  # downstream
-    lr: 1e-3 #5e-2
-    momentum: 0 
-    weight_decay: 0 
-    dampening: 0 
-    nesterov: False 
-  # sgd:
-  #   lr: 0.005           
-  #   momentum: 0.9
-  #   nesterov: True
-  #   weight_decay: 1e-4
-  #   dampening: 0    
+  # sgd:  # downstream
+  #   lr: 1e-3 #5e-2
+  #   momentum: 0 
+  #   weight_decay: 0.01 # 0 
+  #   dampening: 0 
+  #   nesterov: False 
+  sgd:
+    lr: 0.005           
+    momentum: 0.9
+    nesterov: True
+    weight_decay: 1e-4
+    dampening: 0    
 
 directory:
   pretext_model_dir: /home/songd/research/pose2nav/checkpoint/pretext
@@ -107,13 +107,13 @@ logger:
     project: socialnav_pretext
     entity: daeun-song-george-mason-university
     mode: online
-    experiment_name: ${logger.pretext.project}_d${model.d}_e${train_params.epochs}_exp14
+    experiment_name: ${logger.pretext.project}_d${model.d}_e${train_params.epochs}_exp12
 
   downstream:
     project: socialnav_downstream
     entity: daeun-song-george-mason-university
     mode: online
-    experiment_name: ${logger.downstream.project}_d${model.d}_e${train_params.epochs}_exp14
+    experiment_name: ${logger.downstream.project}_d${model.d}_e${train_params.epochs}_exp12
 
   # exp1 : cov coeff 5.0
   # exp3 : cov_coeff 5.0 + new data
@@ -121,7 +121,9 @@ logger:
   # exp5 : new data + yes augmentation + cov coeff 2.0 + inplace true
   # exp6 : dino fix!!! + downstream little fix
 
-  ## ---
-  # exp12 : only scand dataset + compile fix 
+  # exp10 : clip grad + pretxt exp 7
+  # exp10 : optimizer back to adamw
+  # exp11 : optimizer param fix
 
-  # exp14 : compile no
+  ## ---
+  # exp12 : only scand dataset, ped num 3, adamw
