@@ -41,13 +41,3 @@ def get_loss_fn(name: str):
         return vicreg_loss
     raise ValueError(f"Unsupported loss: {name}")
 
-
-# ---------- EndToEnd ----------
-
-# class EndToEndLoss(nn.Module):
-#     def __init__(self, temp_loss_lambda: int = 0.3):
-#         super().__init__()
-#         self.temp_loss_lambda = temp_loss_lambda
-
-#     def forward(self, x_gt, x, dt_gt, dt):
-#         loss = torch.nn.functional.mse_loss(x, x_gt)    # (B, T, L)

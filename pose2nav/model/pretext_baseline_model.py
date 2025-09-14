@@ -9,7 +9,7 @@ from model.encoders import (
     KeypointEncoder2D,
     # RootPointEncoder2D,   # REMOVED
 )
-from model.attention import HumanCrossAttPool
+# from model.attention import HumanCrossAttPool
 
 class Projector (nn.Module):
     def __init__(self, d_in, d_hidden, d_out):
@@ -80,28 +80,28 @@ class PretextModel(nn.Module):
         # self.root2d_encoder = RootPointEncoder2D(
         #     seq_len=self.T_obs, num_humans=self.N_human, input_dim=2, output_dim=d
         # )
-        self.kp_encoder = KeypointEncoder2D(
-            seq_len=self.T_obs, num_humans=self.N_human, num_joints=self.N_joints,
-            coord_dim=2, output_dim=d
-        )
+        # self.kp_encoder = KeypointEncoder2D(
+        #     seq_len=self.T_obs, num_humans=self.N_human, num_joints=self.N_joints,
+        #     coord_dim=2, output_dim=d
+        # )
         self.future_traj_encoder = TrajectoryEncoder(
             input_dim=2, 
             T_pred = self.T_pred, 
             output_dim=d,
         )
 
-        # # === Per-human pooling across humans per frame (linear-softmax on keypoint embeddings only) ===
+        # === Per-human pooling across humans per frame (linear-softmax on keypoint embeddings only) ===
         # self.human_pool_w   = nn.Parameter(torch.randn(d))
         # self.human_pool_temp = getattr(cfg.model, "human_pool_temp", 1.0)
-        self.hum_pool = HumanCrossAttPool(d_model=self.d, n_heads=4, dropout=0.0)
+        # # self.human_pool = HumanCrossAttPool(d_model=d, n_heads=4, dropout=0.1)
 
-        # --- CLS + learned positional table
-        self.cls_token = nn.Parameter(torch.randn(1, 1, d))
-        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        # # --- CLS + learned positional table
+        # self.cls_token = nn.Parameter(torch.randn(1, 1, d))
+        # nn.init.trunc_normal_(self.cls_token, std=0.02)
 
-        self.max_len   = 1 + self.T_obs
-        self.pos_table = nn.Parameter(torch.randn(1, self.max_len, d))
-        nn.init.trunc_normal_(self.pos_table, std=0.02)
+        # self.max_len   = 1 + self.T_obs
+        # self.pos_table = nn.Parameter(torch.randn(1, self.max_len, d))
+        # nn.init.trunc_normal_(self.pos_table, std=0.02)
 
         # === Observation Transformer (temporal) ===
         otc = cfg.model.obs_transformer
@@ -127,7 +127,7 @@ class PretextModel(nn.Module):
     def forward(self, batch: Dict[str, Any], use_future: bool = True) -> Dict[str, torch.Tensor]:
         # ---- Unpack
         past_frames = batch["past_frames"]
-        kp_2d       = batch["past_kp_2d"].float()          # [B, T, N, 17, 2]
+        # kp_2d       = batch["past_kp_2d"].float()          # [B, T, N, 17, 2]
 
         future_positions = batch.get("future_positions", None)
         z_traj = None
@@ -152,15 +152,29 @@ class PretextModel(nn.Module):
         X_img = img_feats.view(B, T, d)                  # [B, T, d]
 
         # Keypoints → [B,T,N,d]
-        X_pose_tn = self.kp_encoder(kp_2d)               # [B, T, N, d]
-
-        pose_mask = None # masking method..
+        # X_pose_tn = self.kp_encoder(kp_2d)               # [B, T, N, d]
 
         # =========================
-        # 2) Cross-attention Pooling (이미지 Q ↔ 사람들 K/V)
+        # 2) Per-frame pooling across humans (linear-softmax) on keypoint embeddings
         # =========================
-        X_hum = self.hum_pool(X_pose_tn, mask=pose_mask, X_img=X_img)   # [B, T, d]
-        body_tokens = X_img + X_hum     # [B, T, d]
+        # scores: [B,T,N]
+        # scores = (X_pose_tn * self.human_pool_w).sum(dim=-1) / float(self.human_pool_temp)
+        # alpha  = scores.softmax(dim=2).unsqueeze(-1)     # [B,T,N,1]
+        # X_hum  = (alpha * X_pose_tn).sum(dim=2)          # [B,T,d]
+        # X_hum  = F.layer_norm(X_hum, (d,))               # stabilize
+
+        # =========================
+        # 2) Cross-attention Pooling (Human Scene Transformer)
+        # =========================
+        # hum_feats = self.human_pool(X_pose_tn)          # kp_feats: [B,T,N,d] (zeros padded)
+        # obs_tokens = torch.stack([img_feats, hum_feats], dim=2).reshape(B, 2*T, d)
+
+        # =========================
+        # 3) Tokens + learned positional embeddings
+        # =========================
+        # body_tokens = torch.stack([X_img, X_hum], dim=2).reshape(B, 2 * T, d)         # [B,2T,d]
+        ## early fusion
+        body_tokens = X_img #+ X_hum     # [B, T, d]
 
         cls_tok     = self.cls_token.expand(B, 1, d)                                   # [B,1,d]
         S = torch.cat([cls_tok, body_tokens], dim=1)                                   # [B,1+T,d]

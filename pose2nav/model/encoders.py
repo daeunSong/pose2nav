@@ -19,10 +19,12 @@ class ImageEncoder(nn.Module):
     """
     Returns a single vector per image: input [B, 3, H, W] -> output [B, output_dim]
     """
-    def __init__(self, backbone: str = "custom", output_dim: int = 256, pretrained: bool = True):
+    def __init__(self, backbone: str = "custom", output_dim: int = 256, pretrained: bool = True, frozen: bool = False):
         super().__init__()
         self.backbone_name = backbone.lower()
         self.output_dim = output_dim
+        self.frozen = frozen
+        self.encoder = None # To be defined below
 
         if self.backbone_name == "custom":
             self.encoder = nn.Sequential(
@@ -46,11 +48,18 @@ class ImageEncoder(nn.Module):
         elif self.backbone_name == "dino":
             self.encoder = torch.hub.load(
                 "facebookresearch/dinov2", "dinov2_vits14_reg"
-            )
+            )            
             dino_out_dim = 384
-            self.fc = nn.Sequential(
-                nn.Linear(dino_out_dim, output_dim), nn.LeakyReLU()
-            )
+            if output_dim == dino_out_dim:
+                self.fc = nn.Identity()
+            else:
+                self.fc = nn.Sequential(
+                    nn.Linear(dino_out_dim, output_dim), nn.GELU()
+                )
+
+            for p in self.encoder.parameters():
+                p.requires_grad = False
+            self.encoder.eval()
         
         else:
             raise ValueError(f"Unsupported image backbone: {self.backbone_name}")
@@ -71,6 +80,7 @@ class ImageEncoder(nn.Module):
     def _get_resnet_output_dim(self, name: str) -> int:
         return {"resnet18": 512, "resnet34": 512, "resnet50": 2048}[name]
 
+    @torch.no_grad()
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: [B, 3, H, W]
         feats = self.encoder(x)            # [B, C, 1, 1]
         return self.fc(feats)              # [B, output_dim]
@@ -91,23 +101,6 @@ class TrajectoryEncoder(nn.Module):
         flat = traj.reshape(B, T * D)        # [B, T*2]
         return self.encoder(flat)            # [B, output_dim]
 
-# ---------- Trajectory Encoder ----------
-# class TrajectoryEncoder(nn.Module):
-#     """
-#     Encodes a 2D sequence [B, T, 2] into a vector [B, output_dim].
-#     Uses a GRU for better temporal summarization.
-#     """
-#     def __init__(self, input_dim: int = 2, output_dim: int = 256, hidden: int = 256, num_layers: int = 1):
-#         super().__init__()
-#         self.gru = nn.GRU(input_size=input_dim, hidden_size=hidden, num_layers=num_layers,
-#                           batch_first=True, bidirectional=False)
-#         self.proj = nn.Sequential(nn.LayerNorm(hidden), nn.Linear(hidden, output_dim), nn.LayerNorm(output_dim))
-
-#     def forward(self, traj: torch.Tensor) -> torch.Tensor:  # traj: [B, T, 2]
-#         _, h = self.gru(traj)            # h: [num_layers, B, hidden]
-#         h = h[-1]                        # [B, hidden]
-#         return self.proj(h)              # [B, output_dim]
-
 # ---------- Keypoint Encoder (2D) ----------
 class KeypointEncoder2D(nn.Module):
     """
@@ -123,31 +116,41 @@ class KeypointEncoder2D(nn.Module):
         super().__init__()
         self.output_dim = output_dim
         self.hidden = hidden
-        self.mlp: Optional[nn.Sequential] = None  # built on first forward
+
+        self.coord_dim = coord_dim
+        self.num_joints = num_joints
+        self.F_in = int(self.num_joints * self.coord_dim)
+        
+        self.mlp = nn.Sequential(
+            nn.LayerNorm(self.F_in),
+            nn.Linear(self.F_in, hidden),
+            nn.LeakyReLU(0.2),
+            nn.Linear(hidden, output_dim),
+            nn.LayerNorm(output_dim),
+        )
 
     def forward(self, kp: torch.Tensor) -> torch.Tensor:
         # kp: [B, T, N, J, 2] or [B, T, N, F]
         if kp.dim() == 5:
             B, T, N, J, C = kp.shape
-            assert C == 2, "Expected last coord dim = 2 for (B,T,N,J,2)"
-            F_in = J * C
-            x = kp.view(B * T * N, F_in)
+            if C != self.coord_dim or J != self.num_joints:
+                raise ValueError(
+                    f"KeypointEncoder2D: runtime (J={J}, C={C}) "
+                    f"doesn't match init (J={self.num_joints}, C={self.coord_dim})."
+                )
+            x = kp.reshape(B * T * N, self.F_in)
         elif kp.dim() == 4:
             B, T, N, F_in = kp.shape
-            x = kp.view(B * T * N, F_in)
+            if F_in != self.F_in:
+                raise ValueError(
+                    f"KeypointEncoder2D: runtime F_in={F_in} "
+                    f"doesn't match init F_in={self.F_in} (J*C)."
+                )
+            x = kp.reshape(B * T * N, self.F_in)
         else:
             raise ValueError(f"Unexpected kp shape: {kp.shape}")
 
-        if self.mlp is None:
-            self.mlp = nn.Sequential(
-                nn.LayerNorm(F_in),
-                nn.Linear(F_in, self.hidden), 
-                nn.LeakyReLU(0.2),
-                nn.Linear(self.hidden, self.output_dim),
-                nn.LayerNorm(self.output_dim),
-            ).to(x.device)
-
-        out = self.mlp(x)                                # [B*T*N, d]
+        out = self.mlp(x)  # [B*T*N, d]
         return out.view(B, T, N, self.output_dim)        # [B, T, N, d]
 
 # ---------- Root Point Encoder (2D) ----------

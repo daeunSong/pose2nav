@@ -3,11 +3,11 @@ dataset:
   train: false
   only_human_visable: true
   only_nonlinear: true
-  resize: [154, 84]  # decrease
+  resize: [224, 224]  # decrease
   metric_waypoint_spacing: 1.0
 
 dataloader:
-  num_workers: 16  # increase #######
+  num_workers: 12  # increase #######
   batch_size: 32   # increase #######
   shuffle: True # whether to shuffle data or not
   pin_memory: True # use pageable memory or pinned memory (https://developer.nvidia.com/blog/how-optimize-data-transfers-cuda-cc/)
@@ -15,51 +15,45 @@ dataloader:
   persistent_workers: true
   prefetch_factor: 4
 
-eval_params:
-  batch_size: 32
-  num_workers: 16
-
 model:
-  d: 512
+  d: 384
   human_pool_temp: 1.0
 
   input:
     T_obs: 6
     T_pred: 12
-    N_human: 6
+    N_human: 3
     N_joints: 17
 
   image_encoder:
     name: dino
     pretrained: true
+    frozen: true
 
   obs_transformer:
     layers: 3
     heads: 4      # increase #######
     ff_mult: 4
-    dropout: 0.1
+    dropout: 0
     norm: preln        # or "postln"
 
   projector:
     use: true
-    d_out: 2048          # 4096
-    hidden: 1024       
+    d_out: 1024          
+    hidden: 512       
 
   downstream:
     goal_encoder:
       dims: [64,256] # MLP dimensions
       l_act: False 
       dropout: 0.2
-      bias: False
+      bias: True
   
     head:
       dims: [256, 64]
       l_act: False 
       dropout: 0.2
-      bias: False
-
-    future_traj_encoder:
-      hidden: 1024
+      bias: True
 
 loss_params:
   vicreg:
@@ -69,5 +63,6 @@ loss_params:
     # eps: 1e-4
 
 directory:
-  downstream_ckpt: /home/songd/research/pose2nav/checkpoint/downstream/socialnav_downstream_d512_e200_exp13_20250908_best.pth
-  out_path: /home/songd/research/pose2nav/pose2nav/validation/val_results_exp13.pkl
+  downstream_ckpt: /home/songd/research/pose2nav/checkpoint/downstream/socialnav_downstream_d384_e50_exp24_20250913_best.pth
+# downstream_ckpt: /home/songd/research/pose2nav/checkpoint/endToend/socialnav_downstream_d384_e50_exp22_20250911_best.pth
+  out_path: /home/songd/research/pose2nav/pose2nav/validation/val_results_exp24.pkl

@@ -31,6 +31,27 @@ class Solarization(object):
             return ImageOps.solarize(img)
         return img
 
+def resize_keypoints_2d(kp: np.ndarray, orig_size: tuple[int, int], new_size: tuple[int, int]):
+    """
+    kp: [T, J, D] or [T, J, 2/3], where last dim has at least (x, y)
+    orig_size: (H, W) of the image BEFORE transform
+    new_size:  (H, W) target after transforms.Resize
+    Returns resized copy (np.float32).
+    """
+    if kp is None:
+        return None
+    kp = np.asarray(kp, dtype=np.float32)
+    if kp.ndim < 3 or kp.shape[-1] < 2:
+        return kp  # nothing to do / malformed
+
+    H0, W0 = orig_size
+    H1, W1 = new_size
+    sx, sy = float(W1) / float(W0), float(H1) / float(H0)
+
+    out = kp.copy()
+    out[..., 0] *= sx  # x
+    out[..., 1] *= sy  # y
+    return out
 
 class SocialNavDataset(Dataset):
     def __init__(
@@ -60,29 +81,29 @@ class SocialNavDataset(Dataset):
             self.data = pickle.load(f)
 
         # Define transformations
-        if self.train:
-            self.transform = transforms.Compose([
-                transforms.RandomResizedCrop(224, interpolation=transforms.InterpolationMode.BICUBIC),
-                transforms.Resize(self.resize, antialias=True),
-                # transforms.RandomHorizontalFlip(p=0.5),
-                transforms.RandomAutocontrast(p=0.4),
-                transforms.RandomApply([
-                    transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)
-                ], p=0.8),
-                transforms.RandomGrayscale(p=0.2),
-                GaussianBlur(p=0.6),
-                Solarization(p=0.5),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225]),
-            ])
-        else:
-            self.transform = transforms.Compose([
-                transforms.Resize(self.resize, antialias=True),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                        std=[0.229, 0.224, 0.225]),
-            ])
+        # if self.train:
+        #     self.transform = transforms.Compose([
+        #         # transforms.RandomResizedCrop(224, interpolation=transforms.InterpolationMode.BICUBIC),
+        #         transforms.Resize(self.resize, antialias=True),
+        #         # transforms.RandomHorizontalFlip(p=0.5),
+        #         transforms.RandomAutocontrast(p=0.4),
+        #         transforms.RandomApply([
+        #             transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)
+        #         ], p=0.8),
+        #         transforms.RandomGrayscale(p=0.2),
+        #         GaussianBlur(p=0.6),
+        #         Solarization(p=0.5),
+        #         transforms.ToTensor(),
+        #         transforms.Normalize(mean=[0.485, 0.456, 0.406],
+        #                              std=[0.229, 0.224, 0.225]),
+        #     ])
+        # else:
+        self.transform = transforms.Compose([
+            transforms.Resize(self.resize, antialias=True),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                    std=[0.229, 0.224, 0.225]),
+        ])
 
         N = len(self.data["past_positions"])
         nonlin_mask = np.asarray(self.data["non_linear"])      
@@ -131,37 +152,59 @@ class SocialNavDataset(Dataset):
         # last past-frame path (string) for plotting later
         past_paths = self.data["past_frames"][idx]  # list[Path-like]
         last_past_frame_path = str(past_paths[-1]) if len(past_paths) > 0 else None
-
-        past_frames = [
-            self.transform(imread(str(p)).convert("RGB"))
-            for p in past_paths
-        ]
-
         future_paths = self.data["future_frames"][idx]
-        future_frames = [
-            self.transform(imread(str(p)).convert("RGB"))
-            for p in future_paths
-        ]
+ 
+        past_imgs = [imread(str(p)).convert("RGB") for p in past_paths]
+        past_sizes = [ (img.height, img.width) for img in past_imgs ]          # [(H0, W0), ...]
+        past_frames = [ self.transform(img) for img in past_imgs ]             # resized to self.resize
+
+        future_imgs = [imread(str(p)).convert("RGB") for p in future_paths]
+        future_sizes = [ (img.height, img.width) for img in future_imgs ]
+        future_frames = [ self.transform(img) for img in future_imgs ]
 
         sample = {
-            "past_positions": self.data["past_positions"][idx],
-            "future_positions": self.data["future_positions"][idx],
-            "past_yaw": self.data["past_yaw"][idx],
-            "future_yaw": self.data["future_yaw"][idx],
-            "past_vw": self.data["past_vw"][idx],
-            "future_vw": self.data["future_vw"][idx],
+            "past_positions": np.array(self.data["past_positions"][idx]),
+            "future_positions": np.array(self.data["future_positions"][idx]),
+            "past_yaw": np.array(self.data["past_yaw"][idx]),
+            "future_yaw": np.array(self.data["future_yaw"][idx]),
+            # "past_vw": self.data["past_vw"][idx],
+            # "future_vw": self.data["future_vw"][idx],
             "past_frames": past_frames,
             "future_frames": future_frames,
-            "past_kp_3d": self.data["past_kp_3d"][idx],
-            "future_kp_3d": self.data["future_kp_3d"][idx],
-            "past_kp_2d": self.data["past_kp_2d"][idx],
-            "future_kp_2d": self.data["future_kp_2d"][idx],
-            "past_root_3d": self.data["past_root_3d"][idx],
-            "future_root_3d": self.data["future_root_3d"][idx],
+            # "past_kp_3d": self.data["past_kp_3d"][idx],
+            # "future_kp_3d": self.data["future_kp_3d"][idx],
+            "past_kp_2d": np.array(self.data["past_kp_2d"][idx]),
+            "future_kp_2d": np.array(self.data["future_kp_2d"][idx]),
+            # "past_root_3d": self.data["past_root_3d"][idx],
+            # "future_root_3d": self.data["future_root_3d"][idx],
 
             # Single original RGB path for the last observed frame
             "last_past_frame_path": last_past_frame_path,
         }
+
+        # --- resize keypoints to match image Resize ---
+        # assume temporal alignment: len(past_sizes) == T_p, len(future_sizes) == T_f
+        H1, W1 = self.resize
+        pkp = sample["past_kp_2d"]
+        fkp = sample["future_kp_2d"]
+
+        if pkp is not None and len(past_sizes) == pkp.shape[0]:
+            # per-frame scaling
+            pkp_resized = []
+            for t in range(pkp.shape[0]):
+                pkp_resized.append(
+                    resize_keypoints_2d(pkp[t], past_sizes[t], (H1, W1))
+                )
+            sample["past_kp_2d"] = np.stack(pkp_resized, axis=0).astype(np.float32)
+
+        if fkp is not None and len(future_sizes) == fkp.shape[0]:
+            fkp_resized = []
+            for t in range(fkp.shape[0]):
+                fkp_resized.append(
+                    resize_keypoints_2d(fkp[t], future_sizes[t], (H1, W1))
+                )
+            sample["future_kp_2d"] = np.stack(fkp_resized, axis=0).astype(np.float32)
+
 
         # Egocentric normalization
         def yaw_to_rot(yaw):
@@ -172,44 +215,45 @@ class SocialNavDataset(Dataset):
         # Egocentric positions
         current = copy.deepcopy(sample["past_positions"][-1])
         current_rot = yaw_to_rot(sample["past_yaw"][-1])
-        Rk_T = current_rot.T
+        # Rk_T = current_rot.T
+        
+        current = current[:2]
+        past_xy = sample["past_positions"][:, :2]
+        future_xy = sample["future_positions"][:, :2]
+        # past_yaw   = np.asarray(sample["past_yaw"])
+        # future_yaw = np.asarray(sample["future_yaw"])
+        sample["past_positions"]   = (past_xy - current) @ current_rot * self.metric_waypoint_spacing
+        sample["future_positions"] = (future_xy - current) @ current_rot * self.metric_waypoint_spacing
 
-        past_xy = np.array(sample["past_positions"],   dtype=np.float32)[:, :2]
-        future_xy = np.array(sample["future_positions"], dtype=np.float32)[:, :2]
-        past_yaw   = np.asarray(sample["past_yaw"], dtype=np.float32)
-        future_yaw = np.asarray(sample["future_yaw"], dtype=np.float32)
-
-        current = np.array(current, dtype=np.float32)[:2]
-        sample["past_positions"]   = (past_xy   - current).dot(current_rot) * self.metric_waypoint_spacing
-        sample["future_positions"] = (future_xy - current).dot(current_rot) * self.metric_waypoint_spacing
+        # print(sample["past_kp_2d"].shape, sample["past_positions"].shape)
 
         # Egocentric keypoints
-        for key, pos_xy, yaws in [
-            ("past_kp_3d",     past_xy,   past_yaw),
-            ("past_root_3d",   past_xy,   past_yaw),
-            ("future_kp_3d",   future_xy, future_yaw),
-            ("future_root_3d", future_xy, future_yaw),
-        ]:
-            arr = np.asarray(sample[key], dtype=np.float32)  # [T, ..., 3]
-            T = arr.shape[0]
-            for t in range(T):
-                # R_t from yaw[t]
-                Rt = yaw_to_rot(yaws[t])
+        # for key, pos_xy, yaws in [
+        #     ("past_kp_3d",     past_xy,   past_yaw),
+        #     ("past_root_3d",   past_xy,   past_yaw),
+        #     ("future_kp_3d",   future_xy, future_yaw),
+        #     ("future_root_3d", future_xy, future_yaw),
+        # ]:
+        #     arr = np.asarray(sample[key], dtype=np.float32)  # [T, ..., 3]
+        #     T = arr.shape[0]
+        #     for t in range(T):
+        #         # R_t from yaw[t]
+        #         Rt = yaw_to_rot(yaws[t])
 
-                # Relative rotation: R_rel = R_k^T * R_t  (2x2)
-                Rrel = Rk_T @ Rt
+        #         # Relative rotation: R_rel = R_k^T * R_t  (2x2)
+        #         Rrel = Rk_T @ Rt
 
-                # Translation in pinned frame: ((pos_xy[t] - current) * R_k) * scale
-                t_rel_xy = ((pos_xy[t, :2] - current) @ current_rot) * self.metric_waypoint_spacing
+        #         # Translation in pinned frame: ((pos_xy[t] - current) * R_k) * scale
+        #         t_rel_xy = ((pos_xy[t, :2] - current) @ current_rot) * self.metric_waypoint_spacing
 
-                # Apply to all keypoints/roots at time t (rotate XY, keep Z, then translate)
-                flat = arr[t].reshape(-1, 3)            # [M,3]
-                xy   = flat[:, :2] @ Rrel.T             # rotate into pinned orientation
-                xy  += t_rel_xy                         # translate into pinned coords
-                flat[:, :2] = xy
-                arr[t] = flat.reshape(arr[t].shape)
+        #         # Apply to all keypoints/roots at time t (rotate XY, keep Z, then translate)
+        #         flat = arr[t].reshape(-1, 3)            # [M,3]
+        #         xy   = flat[:, :2] @ Rrel.T             # rotate into pinned orientation
+        #         xy  += t_rel_xy                         # translate into pinned coords
+        #         flat[:, :2] = xy
+        #         arr[t] = flat.reshape(arr[t].shape)
 
-            sample[key] = arr
+        #     sample[key] = arr
 
         # Goal direction
         dt = np.random.randint(low=len(sample["future_positions"]) // 2,

@@ -3,11 +3,11 @@ dataset:
   train: true
   only_human_visable: true
   only_nonlinear: true
-  resize: [154, 84]  # decrease
+  resize: [224, 224]  # decrease
   metric_waypoint_spacing: 1.0
 
 dataloader:
-  num_workers: 16  # increase #######
+  num_workers: 12  # increase #######
   batch_size: 32   # increase #######
   shuffle: True # whether to shuffle data or not
   pin_memory: True # use pageable memory or pinned memory (https://developer.nvidia.com/blog/how-optimize-data-transfers-cuda-cc/)
@@ -17,15 +17,15 @@ dataloader:
 
 train_params:
   seed: 42
-  epochs: 200           
+  epochs: 200      
   save_every: 50
-  save_best: 150
+  save_best: 180
   loss: vicreg
   sample_seed: 42
   log_every: 50
 
 model:
-  d: 512
+  d: 384
   human_pool_temp: 1.0
 
   input:
@@ -37,6 +37,7 @@ model:
   image_encoder:
     name: dino
     pretrained: true
+    frozen: true
 
   obs_transformer:
     layers: 3
@@ -47,31 +48,28 @@ model:
 
   projector:
     use: true
-    d_out: 2048          # 4096
-    hidden: 1024       
+    d_out: 1024          
+    hidden: 512       
 
   downstream:
     goal_encoder:
       dims: [64,256] # MLP dimensions
       l_act: False 
-      dropout: 0.2
+      dropout: 0.1
       bias: True
   
     head:
       dims: [256, 64]
       l_act: False 
-      dropout: 0.2
+      dropout: 0.1
       bias: True
-
-    future_traj_encoder:
-      hidden: 1024
 
 # pretext
 loss_params:
   vicreg:
-    sim_coef: 25.0
-    std_coef: 25.0
-    cov_coef: 3.0
+    sim_coef: 20 #20.0
+    std_coef: 48 #10.0
+    cov_coef: 6 #25.0
     # eps: 1e-4
 
 optimizer:
@@ -81,7 +79,7 @@ optimizer:
       - 0.9
       - 0.999
     eps: 1e-8
-    weight_decay: 0.03
+    weight_decay: 0.0
     amsgrad: False
 
   sgd:  # downstream
@@ -90,38 +88,23 @@ optimizer:
     weight_decay: 0 
     dampening: 0 
     nesterov: False 
-  # sgd:
-  #   lr: 0.005           
-  #   momentum: 0.9
-  #   nesterov: True
-  #   weight_decay: 1e-4
-  #   dampening: 0    
+ 
 
 directory:
   pretext_model_dir: /home/songd/research/pose2nav/checkpoint/pretext
   downstream_model_dir: /home/songd/research/pose2nav/checkpoint/downstream 
-  pretext_ckpt: ${directory.pretext_model_dir}/${logger.pretext.experiment_name}_20250908_best.pth
+  pretext_ckpt: ${directory.pretext_model_dir}/${logger.pretext.experiment_name}_20250914_best.pth
+  resume_path: 
 
 logger:
   pretext:
     project: socialnav_pretext
     entity: daeun-song-george-mason-university
     mode: online
-    experiment_name: ${logger.pretext.project}_d${model.d}_e${train_params.epochs}_exp14
+    experiment_name: ${logger.pretext.project}_d${model.d}_e${train_params.epochs}_exp25
 
   downstream:
     project: socialnav_downstream
     entity: daeun-song-george-mason-university
     mode: online
-    experiment_name: ${logger.downstream.project}_d${model.d}_e${train_params.epochs}_exp14
-
-  # exp1 : cov coeff 5.0
-  # exp3 : cov_coeff 5.0 + new data
-  # exp4 : new data + no augmentation + cov coeff 1.0
-  # exp5 : new data + yes augmentation + cov coeff 2.0 + inplace true
-  # exp6 : dino fix!!! + downstream little fix
-
-  ## ---
-  # exp12 : only scand dataset + compile fix 
-
-  # exp14 : compile no
+    experiment_name: ${logger.downstream.project}_d${model.d}_e${train_params.epochs}_exp25

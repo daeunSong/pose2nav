@@ -1,4 +1,4 @@
-# train_pretext.py
+# train_endToend.py
 import argparse
 import os
 import math
@@ -14,15 +14,13 @@ from tqdm import tqdm
 import wandb  # W&B
 
 from model.data_loader import SocialNavDataset
-from model.pretext_model import PretextModel
-from model.losses import get_loss_fn
+from model.endToend_model import EndToEndModel
 from utils.helpers import get_conf
 from utils.nn import save_checkpoint, load_checkpoint, check_grad_norm, get_param_groups
-from utils.nn import check_grad_norm, get_param_groups
 
 
-class PretextLearner:
-    def __init__(self, cfg_path, use_wandb=True, resume: bool = False):
+class EndtoEndLearner:
+    def __init__(self, cfg_path, use_wandb=True, resume: str = ""):
         self.cfg = get_conf(cfg_path)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.use_wandb = use_wandb
@@ -34,25 +32,13 @@ class PretextLearner:
         self.set_seed(self.cfg.train_params.seed)
         self.init_data()
         self.init_model()
-        self.init_loss()
         self.init_optimizer()
         if resume:
-            resume_path = getattr(self.cfg.directory, "resume_path", "")
-            self.resume_from(resume_path)
-        self.model = torch.compile(self.uncompiled_model) 
+            self.resume_from(resume)
         self.init_logger()  # W&B init
 
     def _build_checkpoint(self, epoch:int, iteration:int, best:float, last_loss:float):
         model = self.uncompiled_model 
-
-        # map id(param) -> name
-        id2name = {id(p): n for n, p in model.named_parameters()}
-
-        # record param names per optimizer group (in order)
-        group_names = []
-        for g in self.optimizer.param_groups:
-            group_names.append([id2name.get(id(p), None) for p in g["params"]])
-
         ckpt = {
             "time":                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "epoch":                epoch,
@@ -62,7 +48,6 @@ class PretextLearner:
             "model_name":           type(model).__name__,
             "optimizer_name":       type(self.optimizer).__name__,
             "optimizer":            self.optimizer.state_dict(),
-            "optimizer_param_group_names": group_names,
             "model":                model.state_dict(),  
             # "image_encoder":        model.image_encoder.state_dict(),
             # "kp_encoder":           model.kp_encoder.state_dict(),
@@ -77,33 +62,20 @@ class PretextLearner:
     def resume_from(self, ckpt_path: str):
         ckpt = load_checkpoint(ckpt_path, self.device)
 
-        preload = ckpt.get("model", ckpt)  
+        # 1) model weights
+        self.uncompiled_model.load_state_dict(ckpt["model"], strict=True)
 
-        target_sd = self.uncompiled_model.state_dict()
-        filtered = {k: v for k, v in preload.items()
-            if k in target_sd and v.shape == target_sd[k].shape}
-        res = self.uncompiled_model.load_state_dict(filtered, strict=False)
+        # 2) optimizer state
+        if "optimizer" in ckpt and ckpt["optimizer"] is not None:
+            self.optimizer.load_state_dict(ckpt["optimizer"])
 
-        matched = len(filtered) - len(res.missing_keys)
-        print(f"[load/model] matched≈{matched}  missing={len(res.missing_keys)}  unexpected={len(res.unexpected_keys)}")
-        if res.missing_keys:
-            print("  missing(sample):", res.missing_keys[:10])
-        if res.unexpected_keys:
-            print("  unexpected(sample):", res.unexpected_keys[:10])
-
-        if "optimizer" in ckpt and ckpt["optimizer"]:
-            try:
-                self.optimizer.load_state_dict(ckpt["optimizer"])
-            except Exception as e:
-                print(f"[resume] optimizer load failed; using fresh optimizer. Reason: {e}")
-
+        # 3) bookkeeping
         self.start_epoch = int(ckpt.get("epoch", 0))
         self.global_step = int(ckpt.get("iteration", 0))
         self.best_loss   = float(ckpt.get("best", float("inf")))
-        last_loss        = float(ckpt.get("last_loss", float("inf")))
 
         print(f"[✓] Resumed from {ckpt_path} | start_epoch={self.start_epoch}, "
-            f"global_step={self.global_step}, best_loss={self.best_loss:.4f}, last_loss={last_loss:.4f}")
+              f"global_step={self.global_step}, best_loss={self.best_loss:.4f}")
 
     # -------------------- setup --------------------
     def set_seed(self, seed):
@@ -118,20 +90,12 @@ class PretextLearner:
         self.train_loader = DataLoader(dataset, **self.cfg.dataloader)
 
     def init_model(self):
-        self.uncompiled_model = PretextModel(self.cfg).to(self.device)
+        self.uncompiled_model = EndToEndModel(self.cfg).to(self.device)
         self.uncompiled_model.train()
-        # self.model = torch.compile(self.uncompiled_model)
-
-    def init_loss(self):
-        # Base loss (VICReg or Barlow) between z_obs and z_traj
-        self.base_loss_fn = get_loss_fn(self.cfg.train_params.loss)
-
-        self.loss_kwargs = {}
-        lp = getattr(self.cfg, "loss_params", None)
-        if lp and self.cfg.train_params.loss.lower() in lp:
-            self.loss_kwargs = dict(lp[self.cfg.train_params.loss.lower()])
+        self.model = torch.compile(self.uncompiled_model)
 
     def init_optimizer(self):
+        # self.optimizer = torch.optim.AdamW(self.model.parameters(), **self.cfg.optimizer.adamw)
         param_groups = get_param_groups(self.uncompiled_model)
         self.optimizer = torch.optim.AdamW(
             param_groups,
@@ -150,10 +114,10 @@ class PretextLearner:
         if not self.use_wandb:
             self.run = None
             return
-        project = getattr(self.cfg.logger.pretext, "project", "pretext")
-        entity  = getattr(self.cfg.logger.pretext, "entity", None)
-        mode    = getattr(self.cfg.logger.pretext, "mode", "online")  # "online"|"offline"|"disabled"
-        exp     = getattr(self.cfg.logger.pretext, "experiment_name", "exp2")
+        project = getattr(self.cfg.logger.endToend, "project", "endToend")
+        entity  = getattr(self.cfg.logger.endToend, "entity", None)
+        mode    = getattr(self.cfg.logger.endToend, "mode", "online")  # "online"|"offline"|"disabled"
+        exp     = getattr(self.cfg.logger.endToend, "experiment_name", "exp2")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_name = f"{exp}_{timestamp}"
 
@@ -163,7 +127,7 @@ class PretextLearner:
             name=run_name,
             mode=mode,
             config=self._cfg_to_dict(self.cfg),
-            tags=getattr(self.cfg.logger.pretext, "tags", None),
+            tags=getattr(self.cfg.logger.endToend, "tags", None),
         )
         wandb.watch(self.model, log="parameters", log_freq=100)
 
@@ -171,76 +135,61 @@ class PretextLearner:
     def move_batch_to_device(self, batch):
         out = {}
         out["past_frames"] = [x.to(self.device) for x in batch["past_frames"]]
-        # batch["past_frames"] = batch["past_frames"].to(device=self.device)
         out["future_positions"] = batch["future_positions"].to(device=self.device)
-        # out["future_positions"] = future_positions.view(future_positions.shape[0], -1)
         out["past_kp_2d"] = batch["past_kp_2d"].to(device=self.device)
         # out["future_kp_2d"] = batch["future_kp_2d"].to(device=self.device)
+        out["goal"] = out["future_positions"][:, -1, :].contiguous()  # [B, 2]
         return out
 
     def train_one_epoch(self, epoch_idx: int = 0, log_every: int = 50):
-        self.uncompiled_model.train()
-        buf_loss = []
-        buf_sim, buf_std, buf_cov = [], [], []
-
-        total_loss_t = torch.zeros((), device=self.device)
+        loss_buf = []   
+        total_loss_t = torch.zeros((), device="cuda") 
         num_batches = 0
 
-        pbar = tqdm(self.train_loader, desc=f"Train E{epoch_idx+1}", leave=False)
-        for step, data in enumerate(pbar):   # batch
-            
-            # move data to device
+        pbar = tqdm(self.train_loader, desc=f"Downstream E{epoch_idx+1}", leave=False)
+        for step, data in enumerate(pbar):
             batch = self.move_batch_to_device(data)
-            out = self.model(batch)
-            z_obs  = out["z_obs"]
-            z_traj = out["z_traj"]
-
-            loss, (sim_loss, std_loss, cov_loss) = self.base_loss_fn(z_obs, z_traj, **self.loss_kwargs)
+            pred = self.model(batch)
+            target = batch["future_positions"].float()
+            loss = torch.nn.functional.mse_loss(pred, target)
 
             if not torch.isfinite(loss):
-                print("[BAD] total loss NaN.", "debug dims:", z_obs.shape, z_traj.shape)
-                raise FloatingPointError("loss NaN")
+                print("[BAD] loss NaN/Inf"); raise FloatingPointError("loss NaN/Inf")
 
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            grad_norm = check_grad_norm(self.model)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(self.uncompiled_model.parameters(), 1.0)
             self.optimizer.step()
 
-            buf_loss.append(loss.detach())
-            buf_sim.append(sim_loss.detach())
-            buf_std.append(std_loss.detach())
-            buf_cov.append(cov_loss.detach())
-
+            loss_buf.append(loss.detach())
             total_loss_t += loss.detach()
             num_batches += 1
 
             if (step + 1) % log_every == 0:
-                avg_loss = torch.stack(buf_loss).mean().item()
-                avg_sim  = torch.stack(buf_sim).mean().item()
-                avg_std  = torch.stack(buf_std).mean().item()
-                avg_cov  = torch.stack(buf_cov).mean().item()
-
+                avg_loss = torch.stack(loss_buf).mean().item()
                 pbar.set_postfix_str(f"loss={avg_loss:.4f}")
 
                 if self.use_wandb:
+                    try:
+                        grad_norm_val = float(check_grad_norm(self.uncompiled_model))
+                    except Exception:
+                        grad_norm_val = 0.0
+
                     wandb.log({
                         "train/loss_step": avg_loss,
-                        "train/sim_loss": avg_sim,
-                        "train/std_loss": avg_std,
-                        "train/cov_loss": avg_cov,
-                        "train/grad_norm": float(grad_norm) if isinstance(grad_norm, (int, float)) else float(getattr(grad_norm, "item", lambda: 0.0)()),
-                        "train/lr": float(self.optimizer.param_groups[0]["lr"]),
+                        "train/grad_norm": grad_norm_val,
+                        "train/lr_head": float(self.optimizer.param_groups[0]["lr"]),
                     }, step=self.global_step)
 
-                buf_loss.clear(); buf_sim.clear(); buf_std.clear(); buf_cov.clear()
-
+                loss_buf.clear()
+                
             self.global_step += 1
 
         epoch_avg = (total_loss_t / max(1, num_batches)).item()
         if self.use_wandb:
             wandb.log({"train/loss_epoch": epoch_avg}, step=self.global_step)
         return epoch_avg
+
 
     def train(self):
         print(f"Using device: {self.device}")
@@ -250,8 +199,8 @@ class PretextLearner:
         log_every = int(self.cfg.train_params.get("log_every", 50))  #step
 
         model_dir = (
-            getattr(self.cfg.directory, "pretext_model_dir", None)
-            or "checkpoints/pretext"
+            getattr(self.cfg.directory, "endToend_model_dir", None)
+            or "checkpoint/endToend"
         )
         os.makedirs(model_dir, exist_ok=True)
 
@@ -266,20 +215,20 @@ class PretextLearner:
             if (epoch + 1) % save_every == 0 or (is_best and (epoch + 1) >= save_best):
                 timestamp  = datetime.now().strftime("%Y%m%d")
                 tag = "best" if is_best else f"e{epoch+1}"
-                name = f"{self.cfg.logger.pretext.experiment_name}_{timestamp}"
+                name = f"{self.cfg.logger.endToend.experiment_name}_{timestamp}"
 
                 checkpoint = self._build_checkpoint(
                     epoch=epoch+1,
                     iteration=self.global_step,
                     best=self.best_loss,
-                    last_loss=avg_loss
+                    last_loss=avg_loss,
                 )
                 ckpt_path = save_checkpoint(checkpoint, is_best, model_dir, name, epoch+1)   # writes {name}.pth (+ -best.pth if best)
                 print(f"[Checkpoint] Saved to {ckpt_path}")
 
                 if self.use_wandb and os.path.isfile(ckpt_path):
                     artifact = wandb.Artifact(
-                        name=f"{self.cfg.logger.pretext.experiment_name}_{tag}",
+                        name=f"{self.cfg.logger.endToend.experiment_name}_{tag}",
                         type="model",
                         metadata={"epoch": epoch + 1, "loss": float(avg_loss), "best": float(self.best_loss), "saved_at": timestamp},
                     )
@@ -295,12 +244,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--cfg", type=str, required=True)
     parser.add_argument("--no_wandb", action="store_true", help="Disable Weights & Biases logging")
-    parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
+    parser.add_argument("--resume", type=str, default="", help="Path to a .pth checkpoint to resume from (or 'auto')")
     args = parser.parse_args()
 
-    learner = PretextLearner(args.cfg, use_wandb=not args.no_wandb, resume=args.resume)
+    learner = EndtoEndLearner(args.cfg, use_wandb=not args.no_wandb, resume=args.resume)
     learner.train()
 
 # Usage:
-# python pose2nav/train_pretext.py --cfg pose2nav/config/train.yaml
-# python pose2nav/train_pretext.py --cfg pose2nav/config/train.yaml --resume checkpoint/pretext/socialnav_pretext_vicreg_d512_20250831_best.pth
+# python pose2nav/train_endToend.py --cfg pose2nav/config/train.yaml
+# python pose2nav/train_endToend.py --cfg pose2nav/config/train.yaml --resume checkpoint/endToend/socialnav_endtoend_..._best.pth

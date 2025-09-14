@@ -1,63 +1,87 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Any
 
 from model.encoders import (
     ImageEncoder,
-    TrajectoryEncoder,
-    KeypointEncoder2D,
-    # RootPointEncoder2D,   # REMOVED
+    KeypointEncoder2D
 )
 from model.attention import HumanCrossAttPool
 
-class Projector (nn.Module):
-    def __init__(self, d_in, d_hidden, d_out):
+class MLPHead(nn.Module):
+    """
+    Goal-conditioned late-fusion head that predicts ABSOLUTE future positions.
+    Pipeline: goal [B,2] --MLP--> g_enc [B,d_goal]; fused=[z_obs; g_enc] --> MLP --> [B,T_pred,2]
+    """
+    def __init__(self, cfg):
         super().__init__()
-        self.net = nn.Sequential(
-            # nn.LayerNorm(d_in),
-            # nn.Linear(d_in, d_hidden),
-            # nn.LeakyReLU(negative_slope=0.2),
-            # nn.Linear(d_hidden, d_out),
+        self.T_pred = cfg.model.input.T_pred
+        gc = cfg.model.downstream.goal_encoder
+        goal_dims = gc.dims
+        d = cfg.model.d
 
-            nn.Linear(d_in, d_hidden, bias=False),
-            nn.BatchNorm1d(d_hidden, eps=1e-5, affine=True),
-            nn.ReLU(inplace=True),
+        # self.goal_enc = nn.Sequential(
+        #     nn.Linear(2, goal_dims[0], bias=gc.bias),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.LayerNorm(goal_dims[0]),
+        #     nn.Dropout(gc.dropout),
 
-            nn.Linear(d_hidden, d_hidden, bias=False),
-            nn.BatchNorm1d(d_hidden, eps=1e-5, affine=True),
-            nn.ReLU(inplace=True),
+        #     nn.Linear(goal_dims[0], goal_dims[1], bias=gc.bias),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.LayerNorm(goal_dims[1]),
+        #     nn.Dropout(gc.dropout),
 
-            nn.Linear(d_hidden, d_out, bias=False),
-            # nn.BatchNorm1d(d_out, eps=1e-5, affine=True), ss 
+        #     nn.Linear(goal_dims[1], d, bias=gc.bias),   # d = obs_context_size (e.g., 512)
+        # )
 
-            # nn.Linear(d_in, d_hidden, bias=False),
-            # nn.BatchNorm1d(d_hidden, eps=1e-5, affine=True),
-            # nn.ReLU(inplace=True),
-            # nn.Linear(d_hidden, d_hidden, bias=False),
-            # nn.BatchNorm1d(d_hidden, eps=1e-5, affine=True),
-            # nn.ReLU(inplace=True),
-            # nn.Linear(d_hidden, d_out, bias=False),
+        self.goal_enc = nn.Sequential(
+            nn.LayerNorm(2),
+            nn.Linear(2, 64), 
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.LayerNorm(64),
         )
 
-    def forward(self, x):
-        return self.net(x)
+        # fuse_in = d * 2
+        fuse_in = d + 64
 
-class PretextModel(nn.Module):
-    """
-    Observation tokens: per-frame IMAGE + per-frame pooled-HUMANS (from 2D keypoints only).
-    Adds a learnable CLS token (VANP-style) and uses its output as the observation summary.
+        hc = cfg.model.downstream.head
+        head_dims = hc.dims
 
-    Inputs (batch):
-      past_frames : [B, T, 3, H, W] or list[T] of [B, 3, H, W]
-      past_kp_2d  : [B, T, N, 17, 2]
-      future_pos  : [B, T_pred, 2]   (optional; if provided and use_future=True)
+        # build MLP head
+        self.head = nn.Sequential(
+            # nn.Linear(fuse_in, head_dims[0], bias=hc.bias),
+            # nn.LeakyReLU(0.2, inplace=True),
+            # nn.LayerNorm(head_dims[0]),
+            # nn.Dropout(hc.dropout),
 
-    Outputs:
-      z_obs   : [B, d]    (from CLS)
-      z_traj  : [B, d]    (projected future trajectory embedding, if computed)
-      + intermediates
-    """
+            # nn.Linear(head_dims[0], head_dims[1], bias=hc.bias),
+            # nn.LeakyReLU(0.2, inplace=True),
+            # nn.LayerNorm(head_dims[1]),
+            # nn.Dropout(hc.dropout),
+
+            # nn.Linear(head_dims[1], 2 * self.T_pred, bias=hc.bias),  # final layer, no norm/act
+
+            nn.LayerNorm(fuse_in),
+
+            nn.Linear(fuse_in, head_dims[0]),
+            nn.LeakyReLU(0.2),
+            nn.LayerNorm(head_dims[0]),
+            
+            nn.Linear(head_dims[0], head_dims[1]),
+            nn.LeakyReLU(0.2),
+            nn.LayerNorm(head_dims[1]),
+
+            nn.Linear(head_dims[1], 2 * self.T_pred),  # final layer, no norm/act
+        )
+
+    def forward(self, z_obs: torch.Tensor, goal: torch.Tensor) -> torch.Tensor:
+        g = self.goal_enc(goal)                       # [B, d_goal]
+        x = torch.cat([z_obs, g], dim=-1)             # [B, 2d]
+        y = self.head(x)                              # [B, 2*T_pred]
+        return y.view(-1, self.T_pred, 2)             # [B, T_pred, 2]
+
+
+class EndToEndModel(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
@@ -70,7 +94,7 @@ class PretextModel(nn.Module):
         self.N_joints = int(cfg.model.input.N_joints)
         d = self.d
 
-        # === Encoders ===
+       # === Encoders ===
         self.image_encoder = ImageEncoder(
             backbone=cfg.model.image_encoder.name,
             pretrained=cfg.model.image_encoder.pretrained,
@@ -84,13 +108,8 @@ class PretextModel(nn.Module):
             seq_len=self.T_obs, num_humans=self.N_human, num_joints=self.N_joints,
             coord_dim=2, output_dim=d
         )
-        self.future_traj_encoder = TrajectoryEncoder(
-            input_dim=2, 
-            T_pred = self.T_pred, 
-            output_dim=d,
-        )
 
-        # # === Per-human pooling across humans per frame (linear-softmax on keypoint embeddings only) ===
+        # === Per-human pooling across humans per frame (linear-softmax on keypoint embeddings only) ===
         # self.human_pool_w   = nn.Parameter(torch.randn(d))
         # self.human_pool_temp = getattr(cfg.model, "human_pool_temp", 1.0)
         self.hum_pool = HumanCrossAttPool(d_model=self.d, n_heads=4, dropout=0.0)
@@ -117,24 +136,13 @@ class PretextModel(nn.Module):
         self.observation_encoder = nn.TransformerEncoder(enc_layer, num_layers=int(otc.layers))
         self.final_ln = nn.LayerNorm(d)
 
-        # === Projection heads ===
-        pc = cfg.model.projector
-        prj_d_out = int(pc.d_out)
-        prj_hidden_w = int(pc.hidden)
+        self.head = MLPHead(cfg)
 
-        self.projector = Projector(d, prj_hidden_w, prj_d_out)
 
-    def forward(self, batch: Dict[str, Any], use_future: bool = True) -> Dict[str, torch.Tensor]:
+    def forward(self, batch):
         # ---- Unpack
         past_frames = batch["past_frames"]
         kp_2d       = batch["past_kp_2d"].float()          # [B, T, N, 17, 2]
-
-        future_positions = batch.get("future_positions", None)
-        z_traj = None
-        if use_future and (future_positions is not None):
-            future_positions = future_positions.float()
-            z_traj_raw = self.future_traj_encoder(future_positions)  # [B,d]
-            z_traj = self.projector(z_traj_raw)                    # [B,d_out]
 
         # ---- Ensure frames tensor shape
         if isinstance(past_frames, list):
@@ -153,13 +161,13 @@ class PretextModel(nn.Module):
 
         # Keypoints → [B,T,N,d]
         X_pose_tn = self.kp_encoder(kp_2d)               # [B, T, N, d]
-
         pose_mask = None # masking method..
 
         # =========================
         # 2) Cross-attention Pooling (이미지 Q ↔ 사람들 K/V)
         # =========================
         X_hum = self.hum_pool(X_pose_tn, mask=pose_mask, X_img=X_img)   # [B, T, d]
+        ## early fusion
         body_tokens = X_img + X_hum     # [B, T, d]
 
         cls_tok     = self.cls_token.expand(B, 1, d)                                   # [B,1,d]
@@ -171,11 +179,8 @@ class PretextModel(nn.Module):
         # =========================
         U = self.observation_encoder(S)   # [B,1+T,d]
         U = self.final_ln(U)
-        h_cls = U[:, 0, :]                # CLS
-        z_obs = self.projector(h_cls)      # [B,d_out]
+        z_obs = U[:, 0, :]                # CLS
 
-        return {
-            "h_cls": h_cls,
-            "z_obs": z_obs,
-            "z_traj": z_traj,
-        }
+        goal = batch["goal"].float()
+
+        return self.head(z_obs, goal)                    # [B, T_pred, 2]

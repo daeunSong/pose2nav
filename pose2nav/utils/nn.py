@@ -35,7 +35,7 @@ def load_checkpoint(save: str, device: str):
         device: (str) map location
     """
     if not os.path.exists(save):
-        raise f"File doesn't exist {save}"
+        print (f"File doesn't exist {save}")
     return torch.load(save, map_location=device, weights_only=False)
 
 @torch.no_grad()
@@ -49,3 +49,15 @@ def check_grad_norm(net: nn.Module):
         total_norm += param_norm.item() ** 2
     total_norm = total_norm ** (1.0 / 2)
     return total_norm
+
+def get_param_groups(model):
+    decay = []
+    no_decay = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if len(param.shape) == 1 or name.endswith(".bias"):
+            no_decay.append(param)
+        else:
+            decay.append(param)
+    return [{'params': decay}, {'params': no_decay, 'weight_decay': 0.}]
